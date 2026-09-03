@@ -1,7 +1,7 @@
 #ifndef DS3231_DRIVER_H
 #define DS3231_DRIVER_H
 
-#include <Arduino.h>
+#include <Arduino.h> // ity koahy mila tokony atao am HAL any
 
 struct RTCDateTime
 {
