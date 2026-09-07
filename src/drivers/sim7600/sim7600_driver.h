@@ -24,6 +24,9 @@ public:
 
 	bool sendCommand(const char* command, char* response,
 					 std::size_t responseSize, uint32_t timeoutMs);
+	bool writeRaw(const uint8_t* data, std::size_t length,
+				  char* response, std::size_t responseSize,
+				  uint32_t timeoutMs);
 	bool testAt(uint32_t timeoutMs = 1000U);
 
 private:

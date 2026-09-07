@@ -5,6 +5,7 @@
 
 #include "interfaces/invs_driver.h"
 #include "interfaces/iservice.h"
+#include "types/mqtt_types.h"
 
 namespace fortico {
 namespace services {
@@ -33,6 +34,10 @@ public:
                  const uint8_t* nonce, std::size_t nonceSize,
                  const uint8_t* tag, std::size_t tagSize,
                  uint8_t* plaintext, std::size_t plaintextSize) const;
+    bool storeMqttCredentials(const types::MqttCredentials& credentials);
+    bool loadMqttCredentials(types::MqttCredentials& credentials) const;
+    bool storeDeviceId(const char* deviceId);
+    bool loadDeviceId(char* deviceId, std::size_t size) const;
 
 private:
     interfaces::INvsDriver& _nvsDriver;

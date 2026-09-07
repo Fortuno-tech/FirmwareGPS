@@ -5,6 +5,7 @@
 #include "config/security_config.h"
 
 #ifdef ESP32_TARGET
+#include <esp_system.h>
 #include <mbedtls/gcm.h>
 #include <mbedtls/md.h>
 #endif
@@ -112,6 +113,70 @@ bool SecurityService::decrypt(const uint8_t* ciphertext, std::size_t ciphertextS
     (void)tag; (void)tagSize; (void)plaintext; (void)plaintextSize;
     return false;
 #endif
+}
+
+bool SecurityService::storeMqttCredentials(
+    const types::MqttCredentials& credentials)
+{
+    if (!isRunning()) return false;
+    struct EncryptedCredentials {
+        uint8_t nonce[GcmNonceSize];
+        uint8_t ciphertext[sizeof(types::MqttCredentials)];
+        uint8_t tag[GcmTagSize];
+    } blob{};
+#ifdef ESP32_TARGET
+    esp_fill_random(blob.nonce, sizeof(blob.nonce));
+#else
+    return false;
+#endif
+    if (!encrypt(reinterpret_cast<const uint8_t*>(&credentials),
+                 sizeof(credentials), blob.nonce, sizeof(blob.nonce),
+                 blob.ciphertext, sizeof(blob.ciphertext), blob.tag,
+                 sizeof(blob.tag))) return false;
+    if (!_nvsDriver.open(security::NVS_NAMESPACE, false)) return false;
+    const bool stored = _nvsDriver.putBlob(security::NVS_KEY_MQTT_CREDS,
+                                           &blob, sizeof(blob));
+    _nvsDriver.close();
+    return stored;
+}
+
+bool SecurityService::loadMqttCredentials(types::MqttCredentials& credentials) const
+{
+    if (!isRunning()) return false;
+    struct EncryptedCredentials {
+        uint8_t nonce[GcmNonceSize];
+        uint8_t ciphertext[sizeof(types::MqttCredentials)];
+        uint8_t tag[GcmTagSize];
+    } blob{};
+    if (!_nvsDriver.open(security::NVS_NAMESPACE, true)) return false;
+    const bool loaded = _nvsDriver.getBlob(security::NVS_KEY_MQTT_CREDS,
+                                           &blob, sizeof(blob));
+    _nvsDriver.close();
+    return loaded && decrypt(blob.ciphertext, sizeof(blob.ciphertext),
+                             blob.nonce, sizeof(blob.nonce), blob.tag,
+                             sizeof(blob.tag),
+                             reinterpret_cast<uint8_t*>(&credentials),
+                             sizeof(credentials));
+}
+
+bool SecurityService::storeDeviceId(const char* deviceId)
+{
+    if (!isRunning() || deviceId == nullptr) return false;
+    if (!_nvsDriver.open(security::NVS_NAMESPACE, false)) return false;
+    const bool stored = _nvsDriver.putString(security::NVS_KEY_DEVICE_ID,
+                                             deviceId);
+    _nvsDriver.close();
+    return stored;
+}
+
+bool SecurityService::loadDeviceId(char* deviceId, std::size_t size) const
+{
+    if (!isRunning() || deviceId == nullptr || size == 0U) return false;
+    if (!_nvsDriver.open(security::NVS_NAMESPACE, true)) return false;
+    const bool loaded = _nvsDriver.getString(security::NVS_KEY_DEVICE_ID,
+                                             deviceId, size);
+    _nvsDriver.close();
+    return loaded;
 }
 
 }  // namespace services

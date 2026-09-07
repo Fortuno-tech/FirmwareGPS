@@ -42,6 +42,9 @@ constexpr const char* NVS_KEY_WIFI_CREDS = "wifi_creds";
 /// Identifiants MQTT chiffrés
 constexpr const char* NVS_KEY_MQTT_CREDS = "mqtt_creds";
 
+/// Identifiant stable du boîtier utilisé comme clientId MQTT
+constexpr const char* NVS_KEY_DEVICE_ID = "device_id";
+
 /// Identifiants APN chiffrés
 constexpr const char* NVS_KEY_APN_CREDS = "apn_creds";
 

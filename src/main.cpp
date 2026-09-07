@@ -26,6 +26,8 @@
 #include "services/security/security_service.h"
 #include "services/storage/storage_service.h"
 #include "services/telemetry/telemetry_service.h"
+#include "managers/power_manager/power_manager.h"
+#include "managers/ota_manager/ota_manager.h"
 #include "services/rfid/rfid_service.h"
 
 namespace {
@@ -48,6 +50,11 @@ fortico::core::EventBus g_eventBus;
 fortico::core::MemoryMonitor g_memoryMonitor;
 fortico::core::Diagnostics g_diagnostics(g_memoryMonitor);
 fortico::core::PowerMonitor g_powerMonitor(g_battery);
+fortico::interfaces::IDriver* g_powerDrivers[] = {&g_battery};
+fortico::managers::PowerManager g_powerManager(
+    g_powerMonitor, g_powerDrivers, sizeof(g_powerDrivers) / sizeof(g_powerDrivers[0]));
+fortico::managers::EspOtaBackend g_otaBackend;
+fortico::managers::OtaManager g_otaManager(g_otaBackend);
 fortico::core::ErrorHandler g_errorHandler(&g_eventBus);
 fortico::services::SecurityService g_securityService(g_nvsDriver);
 fortico::services::StorageService g_storageService(g_nvsDriver, g_securityService);
@@ -76,7 +83,9 @@ fortico::app::Application g_application(
     g_errorHandler,
     g_securityService,
     g_storageService,
-    g_telemetryService);
+    g_telemetryService,
+    g_powerManager,
+    g_otaManager);
 
 bool g_started = false;
 

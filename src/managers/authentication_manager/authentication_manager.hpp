@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 #include "interfaces/imanager.h"
@@ -25,14 +26,6 @@ public:
 	types::AuthState state() const;
 
 private:
-	struct Credential {
-		const char* uid;
-		const char* driverId;
-	};
-
-	static const Credential _credentials[];
-	static const std::size_t _credentialCount;
-
 	interfaces::IPublisher* _publisher;
 	services::StorageService* _storageService;
 	types::AuthenticationDecision _decision;

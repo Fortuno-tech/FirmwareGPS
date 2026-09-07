@@ -1,19 +1,18 @@
-/**
- * @file    mqtt_types.h
- * @brief   Types de connectivité réseau et MQTT — Fortico.
- *
- * @note    NetState formalise l'enum déjà mentionné au Document 07 §3
- *          (q_networkEvent : "enum NetState{REGISTERED, LOST, RECONNECTING}").
- */
 #pragma once
 
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 
 namespace fortico {
 namespace types {
 
-/// État de connectivité réseau générique (NetworkService -> SystemController/MqttService)
+struct MqttCredentials {
+    char clientId[64];
+    char username[64];
+    char password[96];
+};
+
+/// État de connectivité réseau générique.
 enum class NetState {
     DISCONNECTED,
     REGISTERING,
@@ -22,7 +21,7 @@ enum class NetState {
     RECONNECTING,
 };
 
-/// État de connexion MQTT (MqttService)
+/// État de connexion MQTT.
 enum class MqttConnState {
     IDLE,
     TLS_HANDSHAKE,
@@ -31,11 +30,10 @@ enum class MqttConnState {
     DISCONNECTED,
 };
 
-/// Message MQTT générique, utilisé en q_mqttTx/q_mqttRx (Document 07 §3)
 struct MqttMessage {
     char topic[96];
     const uint8_t* payload;
-    size_t payloadLen;
+    std::size_t payloadLen;
     uint8_t qos;
     bool retain;
 };

@@ -108,6 +108,28 @@ bool Sim7600Driver::sendCommand(const char* command, char* response,
 	return false;
 }
 
+bool Sim7600Driver::writeRaw(const uint8_t* data, std::size_t length,
+							 char* response, std::size_t responseSize,
+							 uint32_t timeoutMs)
+{
+	if (!_initialized || !_active || data == nullptr || length == 0U ||
+		response == nullptr || responseSize < 2U) return false;
+	response[0] = '\0';
+	if (_uartHal.write(data, length) != length) return false;
+	std::size_t received = 0U;
+	const uint32_t startMs = utils::Timer::millis();
+	while (utils::Timer::millis() - startMs < timeoutMs &&
+		   received + 1U < responseSize) {
+		uint8_t byte = 0U;
+		if (_uartHal.read(&byte, 1U, 1U) == 0U) continue;
+		response[received++] = static_cast<char>(byte);
+		response[received] = '\0';
+		if (std::strstr(response, "OK") != nullptr) return true;
+		if (std::strstr(response, "ERROR") != nullptr) return false;
+	}
+	return false;
+}
+
 bool Sim7600Driver::testAt(uint32_t timeoutMs)
 {
 	char response[96]{};

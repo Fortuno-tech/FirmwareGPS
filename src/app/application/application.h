@@ -12,6 +12,8 @@
 #include "services/security/security_service.h"
 #include "services/storage/storage_service.h"
 #include "services/telemetry/telemetry_service.h"
+#include "managers/power_manager/power_manager.h"
+#include "managers/ota_manager/ota_manager.h"
 
 namespace fortico {
 namespace app {
@@ -28,7 +30,9 @@ public:
 				core::ErrorHandler& errorHandler,
 				services::SecurityService& securityService,
 				services::StorageService& storageService,
-				services::TelemetryService& telemetryService);
+				services::TelemetryService& telemetryService,
+				managers::PowerManager& powerManager,
+				managers::OtaManager& otaManager);
 
 	bool init();
 	bool start();
@@ -47,6 +51,8 @@ private:
 	services::SecurityService& _securityService;
 	services::StorageService& _storageService;
 	services::TelemetryService& _telemetryService;
+	managers::PowerManager& _powerManager;
+	managers::OtaManager& _otaManager;
 	bool _initialized;
 	bool _running;
 };

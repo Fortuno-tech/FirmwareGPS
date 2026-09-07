@@ -13,7 +13,9 @@ Application::Application(core::EventBus& eventBus,
 						 core::ErrorHandler& errorHandler,
 						 services::SecurityService& securityService,
 						 services::StorageService& storageService,
-						 services::TelemetryService& telemetryService)
+						 services::TelemetryService& telemetryService,
+						 managers::PowerManager& powerManager,
+						 managers::OtaManager& otaManager)
 	: _eventBus(eventBus), _alertManager(alertManager),
 				  _authenticationService(authenticationService), _rfidService(rfidService),
 				  _sim7600(sim7600),
@@ -21,6 +23,7 @@ Application::Application(core::EventBus& eventBus,
 				  _errorHandler(errorHandler),
 				  _securityService(securityService), _storageService(storageService),
 				  _telemetryService(telemetryService),
+				  _powerManager(powerManager), _otaManager(otaManager),
 	  _initialized(false), _running(false)
 {
 }
@@ -36,6 +39,8 @@ bool Application::init()
 		_errorHandler.report(constants::ErrorCode::BATTERY_SENSOR_FAILURE);
 		return false;
 	}
+	_powerManager.init();
+	_otaManager.init();
 	if (!_securityService.start()) {
 		_errorHandler.report(constants::ErrorCode::NVS_READ_FAILED);
 		return false;
@@ -104,6 +109,7 @@ void Application::update()
 	_alertManager.update();
 	_alertManager.process();
 	_powerMonitor.update();
+	_powerManager.update();
 	_diagnosticsService.update();
 	_telemetryService.update();
 }
