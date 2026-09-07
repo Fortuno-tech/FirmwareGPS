@@ -48,6 +48,9 @@ constexpr const char* NVS_KEY_APN_CREDS = "apn_creds";
 /// Liste blanche des UID RFID autorisés
 constexpr const char* NVS_KEY_RFID_WHITELIST = "rfid_whitelist";
 
+/// Clé racine provisionnée par l'outil de fabrication, jamais codée en dur.
+constexpr const char* NVS_KEY_SECURITY_ROOT = "security_root";
+
 /// Compteur de séquence télémétrie 
 constexpr const char* NVS_KEY_DEVICE_SEQ = "device_seq";
 

@@ -15,6 +15,8 @@
  */
 #pragma once
 
+#include <cstdint>
+
 namespace fortico {
 namespace types {
 
@@ -31,6 +33,14 @@ enum class AuthState {
     UNAUTHENTICATED,
     AUTHENTICATED,
     AUTH_LOST,   ///< badge retiré en cours de conduite — ne coupe jamais le relais directement (Document 02 §5.2)
+};
+
+struct AuthenticationDecision {
+    AuthenticationResult result;
+    AuthState state;
+    char uid[16];
+    char driverId[16];
+    uint64_t timestamp;
 };
 
 }  // namespace types

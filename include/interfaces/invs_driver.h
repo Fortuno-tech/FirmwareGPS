@@ -10,6 +10,8 @@ class INvsDriver {
 public:
     virtual ~INvsDriver() = default;
 
+    virtual bool isInitialized() const = 0;
+
     virtual bool open(const char* namespaceName, bool readOnly) = 0;
 
     virtual void close() = 0;

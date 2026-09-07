@@ -66,18 +66,21 @@ constexpr uint8_t SD_MOSI = 23;
 constexpr uint8_t SD_MISO = 19;
 
 // ============================================================================
-// 4. [SUPPRIMÉ] GPS NEO-6M autonome — voir §5
+// 4. RFID PN532 — signaux auxiliaires
 // ----------------------------------------------------------------------------
-//    Le module NEO-6M et son UART2 dédié (anciennement GPS_RX2=16,
-//    GPS_TX2=17) sont retirés de l'architecture matérielle. Le SIM7600E-L1C
-//    intègre désormais la fonction GPS/GNSS. GPIO16 et GPIO17 sont donc
-//    LIBÉRÉS — voir §7 (réserve d'évolution).
+//    Le PN532 partage le bus I2C défini en §2. IRQ et RESET utilisent deux
+//    GPIO dédiés ; ils ne doivent pas être réutilisés par le modem.
 // ============================================================================
 
-/// SIM7600E-L1C — UART1 TX (canal AT partagé : cellulaire + GNSS)
-constexpr uint8_t SIM7600_TX1 = 27;
-/// SIM7600E-L1C — UART1 RX (canal AT partagé : cellulaire + GNSS)
-constexpr uint8_t SIM7600_RX1 = 14;
+/// PN532 — interruption vers l'ESP32
+constexpr uint8_t PN532_IRQ = 27;
+/// PN532 — reset matériel
+constexpr uint8_t PN532_RESET = 26;
+
+/// SIM7600E-L1C — UART1 TX vers le modem
+constexpr uint8_t SIM7600_TX1 = 17;
+/// SIM7600E-L1C — UART1 RX depuis le modem
+constexpr uint8_t SIM7600_RX1 = 16;
 
 // ============================================================================
 // 6. Actionneur critique — Relais de coupure moteur (5V, 20A)
@@ -144,12 +147,6 @@ constexpr uint8_t SPARE_GPIO_2 = 2;
 constexpr uint8_t SPARE_GPIO_5 = 5;
 /// Libérée suite au déplacement de la LED en GPIO33
 constexpr uint8_t SPARE_GPIO_15 = 15;
-
-constexpr uint8_t SPARE_GPIO_16 = 16;
-
-constexpr uint8_t SPARE_GPIO_17 = 17;
-/// Dispose d'une sortie DAC2 intégrée
-constexpr uint8_t SPARE_GPIO_26 = 26;
 /// ADC1_CH7, entrée pure
 constexpr uint8_t SPARE_ADC_35 = 35;
 /// ADC1_CH3, entrée pure

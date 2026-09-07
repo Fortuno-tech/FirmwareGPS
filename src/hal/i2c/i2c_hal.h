@@ -17,6 +17,10 @@ public:
     bool read(uint8_t address, uint8_t* buffer, size_t length, uint32_t timeoutMs);
     bool scan(uint8_t* foundAddresses, size_t maxAddresses, size_t* foundCount);
 
+#ifdef ESP32_TARGET
+    TwoWire& native();
+#endif
+
 private:
 #ifdef ESP32_TARGET
     ::TwoWire* wire_ = nullptr;

@@ -94,5 +94,11 @@ bool I2cHal::scan(uint8_t* foundAddresses, size_t maxAddresses, size_t* foundCou
 #endif
 }
 
+#ifdef ESP32_TARGET
+TwoWire& I2cHal::native() {
+    return wire_ != nullptr ? *wire_ : Wire;
+}
+#endif
+
 }  // namespace hal
 }  // namespace fortico
