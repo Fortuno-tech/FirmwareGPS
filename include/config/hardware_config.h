@@ -15,6 +15,7 @@
 
 #include <cstdint>
 
+
 namespace fortico {
 namespace hardware {
 
@@ -39,6 +40,16 @@ constexpr uint8_t I2C_MAX_CONSECUTIVE_FAILURES = 5;
 // ============================================================================
 // 2. Bus SPI exclusif (carte SD) — Document 04
 // ============================================================================
+
+/**
+ * @brief Nombre maximal d'échecs consécutifs avant de déclarer
+ *        un Driver PERIPH_DEGRADED.
+ *
+ * @note  Les Drivers peuvent définir une constante locale
+ *        kMaxConsecutiveFailures s'ils ont des besoins différents.
+ *        Cette valeur est le défaut commun.
+ */
+constexpr std::uint8_t DRIVER_MAX_CONSECUTIVE_FAILURES = 5U;
 
 /// Fréquence du bus SPI (VSPI) dédié à la carte SD
 constexpr uint32_t SPI_FREQUENCY_HZ = 4000000;
@@ -94,6 +105,8 @@ constexpr uint8_t GPS_MIN_SATELLITES_FOR_FIX = 4;
 
 /// Atténuation ADC (11 dB ~ plage utile 0–3,3 V après pont diviseur)
 constexpr uint8_t ADC_ATTENUATION_DB = 11;
+constexpr float FUEL_MIN_VALID_VOLTAGE = 0.05F;
+constexpr float FUEL_MAX_VALID_VOLTAGE = 3.35F;
 
 /// Nombre d'échantillons moyennés par cycle de lecture (sur-échantillonnage)
 constexpr uint8_t ADC_OVERSAMPLE_COUNT = 16;

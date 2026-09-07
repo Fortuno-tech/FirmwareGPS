@@ -169,7 +169,7 @@ bool FuelDriver::stop()
 
 bool FuelDriver::isHealthy() const
 {
-    return _initialized && _active && _healthy;
+    return _initialized  && _healthy;
 }
 
 // ----------------------------------------------------------------------------
