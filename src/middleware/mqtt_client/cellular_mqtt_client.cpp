@@ -3,6 +3,8 @@
 #include <cstdio>
 #include <cstring>
 
+#include "config/sim7600_mqtt_config.h"
+
 namespace fortico {
 namespace middleware {
 
@@ -26,16 +28,19 @@ bool CellularMqttClient::connect(const char* host, uint16_t port)
         std::strlen(_credentials.username) > 63U ||
         std::strlen(_credentials.password) > 95U) return false;
     char response[256]{};
-    if (!_modem.sendCommand("AT+CMQTTSTART", response, sizeof(response), 5000U))
+        if (!_modem.sendCommand(modem_mqtt::Commands::START, response,
+                                sizeof(response), 5000U))
         return false;
     char command[384]{};
-    std::snprintf(command, sizeof(command), "AT+CMQTTACCQ=0,\"%s\",0",
-                  _credentials.clientId);
+        std::snprintf(command, sizeof(command),
+                      modem_mqtt::Commands::ACQUIRE_CLIENT,
+                      _credentials.clientId);
     if (!_modem.sendCommand(command, response, sizeof(response), 3000U)) return false;
     std::snprintf(command, sizeof(command),
-                  "AT+CMQTTCONNECT=0,\"tcp://%s:%u\",60,1,\"%s\",\"%s\"",
-                  host, static_cast<unsigned int>(port), _credentials.username,
-                  _credentials.password);
+                      modem_mqtt::Commands::CONNECT, host,
+                      static_cast<unsigned int>(port),
+                      modem_mqtt::Commands::KEEPALIVE_SECONDS,
+                      _credentials.username, _credentials.password);
     _connected = _modem.sendCommand(command, response, sizeof(response), 15000U);
     return _connected;
 }
@@ -47,26 +52,35 @@ bool CellularMqttClient::publish(const char* topic, const void* payload,
         return false;
     char response[128]{};
     char command[64]{};
-    std::snprintf(command, sizeof(command), "AT+CMQTTTOPIC=0,%u",
+    std::snprintf(command, sizeof(command),
+                  modem_mqtt::Commands::SET_TOPIC_LENGTH,
                   static_cast<unsigned int>(std::strlen(topic)));
     if (!_modem.sendCommand(command, response, sizeof(response), 2000U)) return false;
     if (!_modem.writeRaw(reinterpret_cast<const uint8_t*>(topic),
                          std::strlen(topic), response, sizeof(response), 2000U)) return false;
-    std::snprintf(command, sizeof(command), "AT+CMQTTPAYLOAD=0,%u",
+    std::snprintf(command, sizeof(command),
+                  modem_mqtt::Commands::SET_PAYLOAD_LENGTH,
                   static_cast<unsigned int>(length));
     if (!_modem.sendCommand(command, response, sizeof(response), 2000U)) return false;
     if (!_modem.writeRaw(static_cast<const uint8_t*>(payload), length,
                          response, sizeof(response), 5000U)) return false;
-    return _modem.sendCommand("AT+CMQTTPUB=0,1,60", response,
-                              sizeof(response), 5000U);
+    std::snprintf(command, sizeof(command), modem_mqtt::Commands::PUBLISH,
+                  modem_mqtt::Commands::PUBLISH_QOS,
+                  modem_mqtt::Commands::PUBLISH_TIMEOUT_SECONDS);
+    return _modem.sendCommand(command, response, sizeof(response), 5000U);
 }
 
 void CellularMqttClient::disconnect()
 {
     char response[96]{};
-    if (_connected) _modem.sendCommand("AT+CMQTTDISC=0,60", response,
-                                       sizeof(response), 5000U);
-    _modem.sendCommand("AT+CMQTTSTOP", response, sizeof(response), 5000U);
+    char command[64]{};
+    if (_connected) {
+        std::snprintf(command, sizeof(command), modem_mqtt::Commands::DISCONNECT,
+                      modem_mqtt::Commands::PUBLISH_TIMEOUT_SECONDS);
+        _modem.sendCommand(command, response, sizeof(response), 5000U);
+    }
+    _modem.sendCommand(modem_mqtt::Commands::STOP, response, sizeof(response),
+                       5000U);
     _connected = false;
 }
 
