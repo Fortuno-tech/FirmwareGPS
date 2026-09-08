@@ -1,10 +1,15 @@
 #include "drivers/sim7600/sim7600_driver.h"
 
 #include <cstring>
+#include <cstdio>
 
 #include "config/hardware_config.h"
 #include "config/pin_config.h"
 #include "utils/timer_utils.h"
+
+#ifdef ESP32_TARGET
+#include <Arduino.h>
+#endif
 
 namespace fortico {
 namespace drivers {
@@ -134,6 +139,47 @@ bool Sim7600Driver::testAt(uint32_t timeoutMs)
 {
 	char response[96]{};
 	return sendCommand("AT", response, sizeof(response), timeoutMs);
+}
+
+bool Sim7600Driver::waitForNetwork(uint32_t timeoutMs)
+{
+	if (!_initialized || !_active || timeoutMs == 0U) return false;
+	char response[128]{};
+	const uint32_t startMs = utils::Timer::millis();
+	while (utils::Timer::millis() - startMs < timeoutMs) {
+		if (sendCommand("AT+CREG?", response, sizeof(response),
+			hardware::SIM7600_AT_TIMEOUT_MS) &&
+			(std::strstr(response, ",1") != nullptr ||
+			 std::strstr(response, ",5") != nullptr)) {
+			return true;
+		}
+#ifdef ESP32_TARGET
+		delay(1000U);
+#endif
+	}
+	return false;
+}
+
+bool Sim7600Driver::configurePdp(const char* apn)
+{
+	if (!_initialized || !_active || apn == nullptr || apn[0] == '\0' ||
+		std::strlen(apn) > 96U) return false;
+	char command[128]{};
+	char response[128]{};
+	std::snprintf(command, sizeof(command),
+		"AT+CGDCONT=1,\"IP\",\"%s\"", apn);
+	return sendCommand(command, response, sizeof(response),
+		hardware::SIM7600_AT_TIMEOUT_LONG_MS);
+}
+
+bool Sim7600Driver::activatePdp(uint32_t timeoutMs)
+{
+	if (!_initialized || !_active || timeoutMs == 0U) return false;
+	char response[128]{};
+	if (!sendCommand("AT+CGATT=1", response, sizeof(response), timeoutMs)) {
+		return false;
+	}
+	return sendCommand("AT+CGACT=1,1", response, sizeof(response), timeoutMs);
 }
 
 }  // namespace drivers

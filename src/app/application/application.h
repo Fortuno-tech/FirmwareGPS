@@ -41,7 +41,8 @@ public:
 				drivers::FuelDriver& fuelDriver,
 				managers::FuelManager& fuelManager,
 				drivers::RtcDriver& rtcDriver,
-				drivers::SdDriver& sdDriver);
+				drivers::SdDriver& sdDriver,
+				middleware::CellularMqttClient& mqttClient);
 
 	bool init();
 	bool start();

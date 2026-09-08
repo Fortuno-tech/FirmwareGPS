@@ -17,6 +17,7 @@
 #include "drivers/sd/sd_driver.h"
 #include "drivers/rfid/rfid_driver.h"
 #include "drivers/sim7600/sim7600_driver.h"
+#include "middleware/mqtt_client/cellular_mqtt_client.h"
 #include "hal/gpio/gpio_hal.h"
 #include "hal/i2c/i2c_hal.h"
 #include "hal/uart/uart_hal.h"
@@ -33,6 +34,7 @@
 #include "services/security/security_service.h"
 #include "services/storage/storage_service.h"
 #include "services/telemetry/telemetry_service.h"
+#include "services/mqtt/mqtt_telemetry_sink.h"
 #include "managers/power_manager/power_manager.h"
 #include "managers/ota_manager/ota_manager.h"
 #include "services/rfid/rfid_service.h"
@@ -57,6 +59,7 @@ fortico::drivers::RtcDriver g_rtcDriver(g_i2cHal);
 fortico::drivers::SdDriver g_sdDriver(g_spiHal);
 fortico::drivers::RfidDriver g_rfidDriver(g_i2cHal);
 fortico::drivers::Sim7600Driver g_sim7600(g_uartHal);
+fortico::middleware::CellularMqttClient g_mqttClient(g_sim7600);
 
 fortico::core::EventBus g_eventBus;
 fortico::core::MemoryMonitor g_memoryMonitor;
@@ -87,7 +90,10 @@ fortico::managers::DiagnosticsManager g_diagnosticsManager(
 fortico::services::DiagnosticsService g_diagnosticsService(
     g_diagnosticsManager, g_diagnostics, &g_eventBus);
 fortico::managers::TelemetryManager g_telemetryManager(g_battery, &g_eventBus);
-fortico::services::TelemetryService g_telemetryService(g_telemetryManager);
+fortico::services::MqttTelemetrySink g_telemetrySink(
+    g_mqttClient, "fortico/telemetry");
+fortico::services::TelemetryService g_telemetryService(
+    g_telemetryManager, &g_telemetrySink);
 fortico::app::Application g_application(
     g_eventBus,
     g_alertManager,
@@ -107,7 +113,8 @@ fortico::app::Application g_application(
     g_fuelDriver,
     g_fuelManager,
     g_rtcDriver,
-    g_sdDriver);
+    g_sdDriver,
+    g_mqttClient);
 
 bool g_started = false;
 

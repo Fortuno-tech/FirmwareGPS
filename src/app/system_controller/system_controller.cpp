@@ -1,5 +1,7 @@
 #include "app/system_controller/system_controller.hpp"
 
+#include "config/network_config.h"
+
 namespace fortico {
 namespace app {
 
@@ -15,7 +17,8 @@ SystemController::SystemController(
 	managers::PowerManager& powerManager, managers::OtaManager& otaManager,
 	drivers::RelayDriver& relayDriver, managers::RelayManager& relayManager,
 	drivers::FuelDriver& fuelDriver, managers::FuelManager& fuelManager,
-	drivers::RtcDriver& rtcDriver, drivers::SdDriver& sdDriver)
+	drivers::RtcDriver& rtcDriver, drivers::SdDriver& sdDriver,
+	middleware::CellularMqttClient& mqttClient)
 	: _eventBus(eventBus), _alertManager(alertManager),
 	  _authenticationService(authenticationService), _rfidService(rfidService),
 	  _sim7600(sim7600), _diagnosticsService(diagnosticsService),
@@ -25,6 +28,7 @@ SystemController::SystemController(
 	  _otaManager(otaManager), _relayDriver(relayDriver),
 	  _relayManager(relayManager), _fuelDriver(fuelDriver),
 	  _fuelManager(fuelManager), _rtcDriver(rtcDriver), _sdDriver(sdDriver),
+	  _mqttClient(mqttClient),
 	  _initialized(false), _running(false)
 {
 }
@@ -84,7 +88,29 @@ bool SystemController::start()
 		_telemetryService.stop();
 		return false;
 	}
+	if (!_sim7600.waitForNetwork(network::MODEM_NETWORK_REGISTRATION_TIMEOUT_MS) ||
+		!_sim7600.configurePdp(network::APN_DEFAULT) ||
+		!_sim7600.activatePdp(network::MODEM_PDP_CONTEXT_TIMEOUT_MS)) {
+		_errorHandler.report(constants::ErrorCode::MODEM_REGISTRATION_FAILED);
+		_sim7600.stop();
+		_authenticationService.stop();
+		_diagnosticsService.stop();
+		_telemetryService.stop();
+		return false;
+	}
+	types::MqttCredentials credentials{};
+	if (!_securityService.loadMqttCredentials(credentials) ||
+		!_mqttClient.setCredentials(credentials) ||
+		!_mqttClient.connect(network::MQTT_BROKER_HOST, network::MQTT_BROKER_PORT)) {
+		_errorHandler.report(constants::ErrorCode::MQTT_CONNECT_FAILED);
+		_sim7600.stop();
+		_authenticationService.stop();
+		_diagnosticsService.stop();
+		_telemetryService.stop();
+		return false;
+	}
 	if (!_rfidService.start()) {
+		_mqttClient.disconnect();
 		_sim7600.stop();
 		_authenticationService.stop();
 		_diagnosticsService.stop();
@@ -93,6 +119,7 @@ bool SystemController::start()
 	}
 	if (!_eventBus.start()) {
 		_rfidService.stop();
+		_mqttClient.disconnect();
 		_sim7600.stop();
 		_authenticationService.stop();
 		_diagnosticsService.stop();
@@ -130,6 +157,7 @@ void SystemController::update()
 void SystemController::stop()
 {
 	_rfidService.stop();
+	_mqttClient.disconnect();
 	_sim7600.stop();
 	_relayDriver.stop();
 	_fuelDriver.stop();

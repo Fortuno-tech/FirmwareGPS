@@ -28,6 +28,9 @@ public:
 				  char* response, std::size_t responseSize,
 				  uint32_t timeoutMs);
 	bool testAt(uint32_t timeoutMs = 1000U);
+	bool waitForNetwork(uint32_t timeoutMs);
+	bool configurePdp(const char* apn);
+	bool activatePdp(uint32_t timeoutMs);
 
 private:
 	hal::UartHal& _uartHal;

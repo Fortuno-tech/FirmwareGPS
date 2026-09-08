@@ -21,13 +21,14 @@ Application::Application(core::EventBus& eventBus,
                          drivers::FuelDriver& fuelDriver,
                          managers::FuelManager& fuelManager,
                          drivers::RtcDriver& rtcDriver,
-                         drivers::SdDriver& sdDriver)
+                         drivers::SdDriver& sdDriver,
+                         middleware::CellularMqttClient& mqttClient)
     : _systemController(eventBus, alertManager, authenticationService,
                         rfidService, sim7600, diagnosticsService, powerMonitor,
                         errorHandler, securityService, storageService,
                         telemetryService, powerManager, otaManager,
                         relayDriver, relayManager, fuelDriver, fuelManager,
-                        rtcDriver, sdDriver),
+                        rtcDriver, sdDriver, mqttClient),
       _taskManager(), _stateMachine(), _initialized(false), _running(false)
 {
 }

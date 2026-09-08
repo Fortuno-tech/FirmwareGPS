@@ -15,6 +15,7 @@
 #include "managers/diagnostics_manager/diagnostics_manager.hpp"
 #include "managers/ota_manager/ota_manager.h"
 #include "managers/power_manager/power_manager.h"
+#include "middleware/mqtt_client/cellular_mqtt_client.h"
 #include "services/authentication/authentication_service.h"
 #include "services/diagnostics/diagnostics_service.h"
 #include "services/rfid/rfid_service.h"
@@ -45,7 +46,8 @@ public:
 					 drivers::FuelDriver& fuelDriver,
 					 managers::FuelManager& fuelManager,
 					 drivers::RtcDriver& rtcDriver,
-					 drivers::SdDriver& sdDriver);
+					 drivers::SdDriver& sdDriver,
+					 middleware::CellularMqttClient& mqttClient);
 
 		bool init();
 		bool start();
@@ -76,6 +78,7 @@ private:
 	managers::FuelManager& _fuelManager;
 	drivers::RtcDriver& _rtcDriver;
 	drivers::SdDriver& _sdDriver;
+	middleware::CellularMqttClient& _mqttClient;
 	bool _initialized;
 	bool _running;
 };
