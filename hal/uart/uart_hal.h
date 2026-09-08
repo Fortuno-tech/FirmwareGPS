@@ -6,7 +6,6 @@
 class UARTHAL
 {
 public:
-
     static void begin(
         HardwareSerial& serial,
         uint32_t baudrate,
@@ -20,6 +19,10 @@ public:
     );
 
     static bool available(
+        HardwareSerial& serial
+    );
+
+    static void flushInput(
         HardwareSerial& serial
     );
 

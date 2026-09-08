@@ -30,36 +30,39 @@ bool UARTHAL::available(
     return serial.available() > 0;
 }
 
+void UARTHAL::flushInput(
+    HardwareSerial& serial
+)
+{
+    while (serial.available())
+    {
+        serial.read();
+    }
+}
+
 String UARTHAL::readLine(
     HardwareSerial& serial,
     uint32_t timeout
 )
 {
     uint32_t start = millis();
-
     String response;
 
-    while (
-        millis() - start < timeout
-    )
+    while (millis() - start < timeout)
     {
         while (serial.available())
         {
             char c = serial.read();
-
             if (c == '\n')
             {
                 return response;
             }
-
             if (c != '\r')
             {
                 response += c;
             }
         }
-
         delay(1);
     }
-
     return response;
 }

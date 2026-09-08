@@ -1,22 +1,14 @@
 #include "rtc_hal.h"
 
-#include <Wire.h>
-
+#include "i2c_hal.h"
 #include "pin_config.h"
 
 bool RTCHAL::begin()
 {
-    // Le bus I2C est déjà initialisé
-    // par I2CHAL.
-
-    Wire.beginTransmission(
-        DS3231_I2C_ADDRESS
-    );
-
-    uint8_t error =
-        Wire.endTransmission();
-
-    return error == 0;
+    return ForticoHAL::I2CHAL::init()
+        && ForticoHAL::I2CHAL::devicePresent(
+            DS3231_I2C_ADDRESS
+        );
 }
 
 bool RTCHAL::readRegisters(
@@ -25,39 +17,31 @@ bool RTCHAL::readRegisters(
     size_t length
 )
 {
-    Wire.beginTransmission(
+    TwoWire& wire = ForticoHAL::I2CHAL::getWire();
+
+    wire.beginTransmission(
         DS3231_I2C_ADDRESS
     );
+    wire.write(address);
 
-    Wire.write(address);
+    if (wire.endTransmission() != 0)
+    {
+        return false;
+    }
 
     if (
-        Wire.endTransmission(
-            false
-        ) != 0
+        wire.requestFrom(
+            DS3231_I2C_ADDRESS,
+            length
+        ) != length
     )
     {
         return false;
     }
 
-    uint8_t received =
-        Wire.requestFrom(
-            (uint8_t)DS3231_I2C_ADDRESS,
-            (uint8_t)length
-        );
-
-    if (received != length)
+    for (size_t index = 0; index < length; ++index)
     {
-        return false;
-    }
-
-    for (
-        size_t i = 0;
-        i < length;
-        i++
-    )
-    {
-        buffer[i] = Wire.read();
+        buffer[index] = wire.read();
     }
 
     return true;
@@ -68,14 +52,13 @@ bool RTCHAL::writeRegister(
     uint8_t value
 )
 {
-    Wire.beginTransmission(
+    TwoWire& wire = ForticoHAL::I2CHAL::getWire();
+
+    wire.beginTransmission(
         DS3231_I2C_ADDRESS
     );
+    wire.write(address);
+    wire.write(value);
 
-    Wire.write(address);
-    Wire.write(value);
-
-    return (
-        Wire.endTransmission() == 0
-    );
+    return wire.endTransmission() == 0;
 }

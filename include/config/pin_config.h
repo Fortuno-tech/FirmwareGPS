@@ -20,11 +20,9 @@
 // =====================================================
 // SIM7600 UART
 // =====================================================
-
-#define SIM7600_RX_PIN 16
-#define SIM7600_TX_PIN 17
-
-#define SIM7600_PWRKEY_PIN 4
+#define SIM7600_RX_PIN 25   // GPIO25 (RX de l'ESP) <- T du SIM7600
+#define SIM7600_TX_PIN 32   // GPIO32 (TX de l'ESP) -> R du SIM7600
+#define SIM7600_PWRKEY_PIN 4 // GPIO4 -> K du SIM7600
 
 #define DS3231_I2C_ADDRESS 0x68
 
