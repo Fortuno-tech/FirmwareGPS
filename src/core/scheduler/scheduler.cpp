@@ -31,6 +31,17 @@ bool Scheduler::start()
 	return true;
 }
 
+void Scheduler::stop()
+{
+	if (!_running) return;
+	_running = false;
+	if (_task != nullptr) {
+		TaskHandle_t task = _task;
+		_task = nullptr;
+		vTaskDelete(task);
+	}
+}
+
 bool Scheduler::isRunning() const { return _running; }
 
 void Scheduler::taskEntry(void* context) { static_cast<Scheduler*>(context)->run(); }

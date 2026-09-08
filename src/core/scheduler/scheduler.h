@@ -14,6 +14,7 @@ public:
 	Scheduler();
 	bool add(uint32_t periodMs, Callback callback, void* context);
 	bool start();
+	void stop();
 	bool isRunning() const;
 
 private:

@@ -1,5 +1,8 @@
 #pragma once
 
+#include "app/app_state_machine/app_state_machine.hpp"
+#include "app/system_controller/system_controller.hpp"
+#include "app/task_manager/task_manager.hpp"
 #include "core/event_bus/event_bus.h"
 #include "interfaces/irfid_driver.h"
 #include "drivers/sim7600/sim7600_driver.h"
@@ -38,21 +41,15 @@ public:
 	bool start();
 	void update();
 	void stop();
+	types::SystemState state() const;
 
 private:
-	core::EventBus& _eventBus;
-	managers::AlertManager& _alertManager;
-	services::AuthenticationService& _authenticationService;
-	services::RfidService& _rfidService;
-	drivers::Sim7600Driver& _sim7600;
-	services::DiagnosticsService& _diagnosticsService;
-	core::PowerMonitor& _powerMonitor;
-	core::ErrorHandler& _errorHandler;
-	services::SecurityService& _securityService;
-	services::StorageService& _storageService;
-	services::TelemetryService& _telemetryService;
-	managers::PowerManager& _powerManager;
-	managers::OtaManager& _otaManager;
+	static void updateTask(void* context);
+	void scheduledUpdate();
+
+	SystemController _systemController;
+	TaskManager _taskManager;
+	AppStateMachine _stateMachine;
 	bool _initialized;
 	bool _running;
 };
