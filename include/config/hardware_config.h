@@ -117,12 +117,13 @@ constexpr float ADC_EMA_ALPHA = 0.2f;
 /// Période d'échantillonnage de SensorSamplingTask (batterie/température/carburant)
 constexpr uint32_t SENSOR_SAMPLING_PERIOD_MS = 500;
 
+#include "utils/adc_calibration.h"
+
 /**
  * @brief Ratio du pont diviseur de tension batterie (12V nominal).
- * @warning Valeur d'exemple — DOIT être calibrée physiquement sur le montage
- *          réel avant toute mise en production (Pinout V4, note n°3).
+ *        Issu de la calibration physique (utils/adc_calibration.h).
  */
-constexpr float BATTERY_VOLTAGE_DIVIDER_RATIO = 4.0f;
+constexpr float BATTERY_VOLTAGE_DIVIDER_RATIO = fortico::calibration::BATTERY_DIVIDER_RATIO;
 
 /// Seuil de tension batterie considéré critique (déclenche DEGRADED_MODE,
 /// jamais une coupure moteur — Document 02 §4) [ASSUMPTION seuil]
@@ -130,11 +131,9 @@ constexpr float BATTERY_CRITICAL_VOLTAGE = 10.5f;
 
 /**
  * @brief Ratio de conversion de la jauge carburant (FUEL_ADC, GPIO36).
- * @warning [ASSUMPTION] Broche et conditionnement provisoires — voir
- *          pin_config.h §9.3. Ratio à déterminer une fois le type de jauge
- *          (résistive/capacitive) confirmé par l'équipe hardware.
+ *        Issu de la calibration physique (utils/adc_calibration.h).
  */
-constexpr float FUEL_SENDER_RATIO_PLACEHOLDER = 1.0f;
+constexpr float FUEL_SENDER_RATIO_PLACEHOLDER = fortico::calibration::FUEL_SENDER_DIVIDER_RATIO;
 
 // ============================================================================
 // 5. Entrées utilisateur — Document 06 (AlertManager)
@@ -163,5 +162,5 @@ constexpr uint32_t SD_FLUSH_INTERVAL_MS = 5000;
 /// Taille du buffer RAM d'enregistrements avant flush forcé [ASSUMPTION]
 constexpr uint16_t SD_WRITE_BUFFER_MAX_RECORDS = 64;
 
-}  // namespace hw
+}  // namespace hardware
 }  // namespace fortico

@@ -54,6 +54,9 @@ constexpr const char* NVS_KEY_RFID_WHITELIST = "rfid_whitelist";
 /// Clé racine provisionnée par l'outil de fabrication, jamais codée en dur.
 constexpr const char* NVS_KEY_SECURITY_ROOT = "security_root";
 
+/// Clé publique Ed25519 pour la vérification des mises à jour OTA
+constexpr const char* NVS_KEY_OTA_PUBKEY = "ota_pubkey";
+
 /// Compteur de séquence télémétrie 
 constexpr const char* NVS_KEY_DEVICE_SEQ = "device_seq";
 

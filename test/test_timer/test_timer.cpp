@@ -1,8 +1,7 @@
-/* #include <unity.h>
+#include <unity.h>
 #include <cstdint>
 
 #include "utils/timer_utils.h"
-#include "../src/utils/timer_utils.cpp"
 using namespace fortico;
 
 namespace {
@@ -164,4 +163,3 @@ int main()
 
     return UNITY_END();
 }
- */

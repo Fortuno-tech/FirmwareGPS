@@ -39,6 +39,13 @@ bool SecurityService::isRunning() const { return _running && _keyLoaded; }
 bool SecurityService::provisionRootKey(const uint8_t* key, std::size_t length)
 {
     if (key == nullptr || length != KeySize || !_nvsDriver.isInitialized()) return false;
+    if (_nvsDriver.open(security::NVS_NAMESPACE, true)) {
+        uint8_t existingKey[KeySize]{};
+        const bool alreadyProvisioned = _nvsDriver.getBlob(
+            security::NVS_KEY_SECURITY_ROOT, existingKey, sizeof(existingKey));
+        _nvsDriver.close();
+        if (alreadyProvisioned) return false;
+    }
     if (!_nvsDriver.open(security::NVS_NAMESPACE, false)) return false;
     const bool stored = _nvsDriver.putBlob(security::NVS_KEY_SECURITY_ROOT, key, KeySize);
     _nvsDriver.close();
@@ -48,6 +55,29 @@ bool SecurityService::provisionRootKey(const uint8_t* key, std::size_t length)
         _running = true;
     }
     return stored;
+}
+
+bool SecurityService::provision(const uint8_t* key, std::size_t keyLength,
+    const types::MqttCredentials& credentials, const char* deviceId)
+{
+    if (key == nullptr || keyLength != KeySize || deviceId == nullptr ||
+        deviceId[0] == '\0' || credentials.clientId[0] == '\0' ||
+        credentials.username[0] == '\0' || credentials.password[0] == '\0') {
+        return false;
+    }
+    if (!provisionRootKey(key, keyLength) ||
+        !storeMqttCredentials(credentials) || !storeDeviceId(deviceId)) {
+        if (_nvsDriver.isInitialized() &&
+            _nvsDriver.open(security::NVS_NAMESPACE, false)) {
+            _nvsDriver.remove(security::NVS_KEY_MQTT_CREDS);
+            _nvsDriver.remove(security::NVS_KEY_DEVICE_ID);
+            _nvsDriver.remove(security::NVS_KEY_SECURITY_ROOT);
+            _nvsDriver.close();
+        }
+        stop();
+        return false;
+    }
+    return true;
 }
 
 bool SecurityService::hashBadge(const char* normalizedUid, uint8_t* digest,

@@ -24,6 +24,9 @@ public:
     bool isRunning() const override;
 
     bool provisionRootKey(const uint8_t* key, std::size_t length);
+    bool provision(const uint8_t* key, std::size_t keyLength,
+                   const types::MqttCredentials& credentials,
+                   const char* deviceId);
     bool hashBadge(const char* normalizedUid, uint8_t* digest,
                    std::size_t digestSize) const;
     bool encrypt(const uint8_t* plaintext, std::size_t plaintextSize,

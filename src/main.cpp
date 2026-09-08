@@ -38,6 +38,8 @@
 #include "managers/power_manager/power_manager.h"
 #include "managers/ota_manager/ota_manager.h"
 #include "services/rfid/rfid_service.h"
+#include "services/security/provisioning_service.h"
+#include "services/security/ota_key_store.h"
 
 namespace {
 
@@ -69,7 +71,8 @@ fortico::interfaces::IDriver* g_powerDrivers[] = {&g_battery};
 fortico::managers::PowerManager g_powerManager(
     g_powerMonitor, g_powerDrivers, sizeof(g_powerDrivers) / sizeof(g_powerDrivers[0]));
 fortico::managers::EspOtaBackend g_otaBackend;
-fortico::managers::OtaManager g_otaManager(g_otaBackend);
+fortico::managers::Ed25519OtaVerifier g_otaVerifier(nullptr);
+fortico::managers::OtaManager g_otaManager(g_otaBackend, g_otaVerifier);
 fortico::managers::RelayManager g_relayManager(g_relayDriver);
 fortico::managers::FuelManager g_fuelManager(g_fuelDriver);
 fortico::core::ErrorHandler g_errorHandler(&g_eventBus);
@@ -120,6 +123,66 @@ bool g_started = false;
 
 }  // namespace
 
+void handleSerialProvisioning(fortico::services::ProvisioningService& provisioningService)
+{
+    if (provisioningService.isProvisioned()) {
+        return;
+    }
+
+    Serial.println(F("[PROV] Device unprovisioned. Waiting 30s for PROV payload on Serial..."));
+    const uint32_t startMs = millis();
+    String line = "";
+
+    while (millis() - startMs < 30000U) {
+        while (Serial.available() > 0) {
+            const char c = static_cast<char>(Serial.read());
+            if (c == '\n' || c == '\r') {
+                line.trim();
+                if (line.startsWith("PROV:")) {
+                    // Parse PROV:<rootKeyHex>:<otaPubKeyHex>:<deviceId>:<clientId>:<user>:<pass>
+                    int idx1 = line.indexOf(':', 5);
+                    int idx2 = line.indexOf(':', idx1 + 1);
+                    int idx3 = line.indexOf(':', idx2 + 1);
+                    int idx4 = line.indexOf(':', idx3 + 1);
+                    int idx5 = line.indexOf(':', idx4 + 1);
+
+                    if (idx1 > 0 && idx2 > idx1 && idx3 > idx2 && idx4 > idx3 && idx5 > idx4) {
+                        String rootKeyHex = line.substring(5, idx1);
+                        String otaPubKeyHex = line.substring(idx1 + 1, idx2);
+                        String deviceId = line.substring(idx2 + 1, idx3);
+                        String clientId = line.substring(idx3 + 1, idx4);
+                        String username = line.substring(idx4 + 1, idx5);
+                        String password = line.substring(idx5 + 1);
+
+                        uint8_t rootKey[32] = {};
+                        uint8_t otaPubKey[32] = {};
+
+                        if (fortico::services::ProvisioningService::hexToBytes(rootKeyHex.c_str(), rootKey, 32) &&
+                            fortico::services::ProvisioningService::hexToBytes(otaPubKeyHex.c_str(), otaPubKey, 32)) {
+
+                            fortico::types::MqttCredentials creds{};
+                            strncpy(creds.clientId, clientId.c_str(), sizeof(creds.clientId) - 1);
+                            strncpy(creds.username, username.c_str(), sizeof(creds.username) - 1);
+                            strncpy(creds.password, password.c_str(), sizeof(creds.password) - 1);
+
+                            if (provisioningService.provisionDevice(rootKey, 32, otaPubKey, 32, creds, deviceId.c_str())) {
+                                Serial.println(F("PROV:OK"));
+                                return;
+                            }
+                        }
+                    }
+                    Serial.println(F("PROV:FAIL"));
+                }
+                line = "";
+            } else {
+                line += c;
+            }
+        }
+        delay(10);
+    }
+    Serial.println(F("[PROV] Provisioning timeout reached. Starting with default/unprovisioned state."));
+}
+
 void setup()
 {
     Serial.begin(115200);
@@ -128,6 +191,18 @@ void setup()
     if (g_nvsDriver.init() != fortico::constants::ErrorCode::OK) {
         return;
     }
+
+    fortico::services::ProvisioningService provisioningService(g_securityService, g_nvsDriver);
+    handleSerialProvisioning(provisioningService);
+
+    g_securityService.start();
+
+    uint8_t otaPubKey[32] = {};
+    fortico::services::OtaKeyStore otaKeyStore(g_nvsDriver);
+    if (otaKeyStore.loadPublicKey(otaPubKey)) {
+        g_otaVerifier = fortico::managers::Ed25519OtaVerifier(otaPubKey);
+    }
+
 
     g_authenticationManager.setCredentialStore(&g_storageService);
 
@@ -142,3 +217,4 @@ void loop()
     (void)g_started;
     delay(10);
 }
+
