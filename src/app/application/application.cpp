@@ -15,11 +15,19 @@ Application::Application(core::EventBus& eventBus,
                          services::StorageService& storageService,
                          services::TelemetryService& telemetryService,
                          managers::PowerManager& powerManager,
-                         managers::OtaManager& otaManager)
+                         managers::OtaManager& otaManager,
+                         drivers::RelayDriver& relayDriver,
+                         managers::RelayManager& relayManager,
+                         drivers::FuelDriver& fuelDriver,
+                         managers::FuelManager& fuelManager,
+                         drivers::RtcDriver& rtcDriver,
+                         drivers::SdDriver& sdDriver)
     : _systemController(eventBus, alertManager, authenticationService,
                         rfidService, sim7600, diagnosticsService, powerMonitor,
                         errorHandler, securityService, storageService,
-                        telemetryService, powerManager, otaManager),
+                        telemetryService, powerManager, otaManager,
+                        relayDriver, relayManager, fuelDriver, fuelManager,
+                        rtcDriver, sdDriver),
       _taskManager(), _stateMachine(), _initialized(false), _running(false)
 {
 }

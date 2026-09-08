@@ -35,7 +35,13 @@ public:
 				services::StorageService& storageService,
 				services::TelemetryService& telemetryService,
 				managers::PowerManager& powerManager,
-				managers::OtaManager& otaManager);
+				managers::OtaManager& otaManager,
+				drivers::RelayDriver& relayDriver,
+				managers::RelayManager& relayManager,
+				drivers::FuelDriver& fuelDriver,
+				managers::FuelManager& fuelManager,
+				drivers::RtcDriver& rtcDriver,
+				drivers::SdDriver& sdDriver);
 
 	bool init();
 	bool start();

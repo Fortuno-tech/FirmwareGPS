@@ -143,9 +143,9 @@ constexpr uint8_t FUEL_ADC = 36;
 
 /// Libérée suite au passage du RFID en I2C
 constexpr uint8_t SPARE_GPIO_2 = 2;
-/// Libérée suite au passage du RFID en I2C
+
 constexpr uint8_t SPARE_GPIO_5 = 5;
-/// Libérée suite au déplacement de la LED en GPIO33
+
 constexpr uint8_t SPARE_GPIO_15 = 15;
 /// ADC1_CH7, entrée pure
 constexpr uint8_t SPARE_ADC_35 = 35;

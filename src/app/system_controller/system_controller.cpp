@@ -12,14 +12,20 @@ SystemController::SystemController(
 	services::SecurityService& securityService,
 	services::StorageService& storageService,
 	services::TelemetryService& telemetryService,
-	managers::PowerManager& powerManager, managers::OtaManager& otaManager)
+	managers::PowerManager& powerManager, managers::OtaManager& otaManager,
+	drivers::RelayDriver& relayDriver, managers::RelayManager& relayManager,
+	drivers::FuelDriver& fuelDriver, managers::FuelManager& fuelManager,
+	drivers::RtcDriver& rtcDriver, drivers::SdDriver& sdDriver)
 	: _eventBus(eventBus), _alertManager(alertManager),
 	  _authenticationService(authenticationService), _rfidService(rfidService),
 	  _sim7600(sim7600), _diagnosticsService(diagnosticsService),
 	  _powerMonitor(powerMonitor), _errorHandler(errorHandler),
 	  _securityService(securityService), _storageService(storageService),
 	  _telemetryService(telemetryService), _powerManager(powerManager),
-	  _otaManager(otaManager), _initialized(false), _running(false)
+	  _otaManager(otaManager), _relayDriver(relayDriver),
+	  _relayManager(relayManager), _fuelDriver(fuelDriver),
+	  _fuelManager(fuelManager), _rtcDriver(rtcDriver), _sdDriver(sdDriver),
+	  _initialized(false), _running(false)
 {
 }
 
@@ -36,6 +42,13 @@ bool SystemController::init()
 	}
 	_powerManager.init();
 	_otaManager.init();
+	_relayManager.init();
+	if (_fuelDriver.init() != constants::ErrorCode::OK ||
+		_rtcDriver.init() != constants::ErrorCode::OK) {
+		_errorHandler.report(constants::ErrorCode::UNKNOWN);
+		return false;
+	}
+	_sdDriver.init();
 	if (!_securityService.start()) {
 		_errorHandler.report(constants::ErrorCode::NVS_READ_FAILED);
 		return false;
@@ -86,6 +99,11 @@ bool SystemController::start()
 		_telemetryService.stop();
 		return false;
 	}
+	if (!_relayDriver.start() || !_fuelDriver.start() || !_rtcDriver.start()) {
+		stop();
+		return false;
+	}
+	_sdDriver.start();
 	_running = true;
 	return true;
 }
@@ -98,6 +116,13 @@ void SystemController::update()
 	_alertManager.process();
 	_powerMonitor.update();
 	_powerManager.update();
+	_relayManager.update();
+	_relayManager.process();
+	_fuelManager.update();
+	_fuelManager.process();
+	_fuelDriver.poll();
+	_rtcDriver.poll();
+	_sdDriver.poll();
 	_diagnosticsService.update();
 	_telemetryService.update();
 }
@@ -106,6 +131,10 @@ void SystemController::stop()
 {
 	_rfidService.stop();
 	_sim7600.stop();
+	_relayDriver.stop();
+	_fuelDriver.stop();
+	_rtcDriver.stop();
+	_sdDriver.stop();
 	_authenticationService.stop();
 	_diagnosticsService.stop();
 	_telemetryService.stop();

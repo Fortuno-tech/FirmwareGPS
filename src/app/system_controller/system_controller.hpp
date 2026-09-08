@@ -5,7 +5,13 @@
 #include "core/event_bus/event_bus.h"
 #include "core/power/power_monitor.h"
 #include "drivers/sim7600/sim7600_driver.h"
+#include "drivers/relay/relay_driver.h"
+#include "drivers/fuel/fuel_driver.h"
+#include "drivers/rtc/rtc_driver.h"
+#include "drivers/sd/sd_driver.h"
 #include "managers/alert_manager/alert_manager.hpp"
+#include "managers/relay_manager/relay_manager.h"
+#include "managers/fuel_manager/fuel_manager.h"
 #include "managers/diagnostics_manager/diagnostics_manager.hpp"
 #include "managers/ota_manager/ota_manager.h"
 #include "managers/power_manager/power_manager.h"
@@ -33,7 +39,13 @@ public:
 					 services::StorageService& storageService,
 					 services::TelemetryService& telemetryService,
 					 managers::PowerManager& powerManager,
-					 managers::OtaManager& otaManager);
+					 managers::OtaManager& otaManager,
+					 drivers::RelayDriver& relayDriver,
+					 managers::RelayManager& relayManager,
+					 drivers::FuelDriver& fuelDriver,
+					 managers::FuelManager& fuelManager,
+					 drivers::RtcDriver& rtcDriver,
+					 drivers::SdDriver& sdDriver);
 
 		bool init();
 		bool start();
@@ -58,6 +70,12 @@ private:
 	services::TelemetryService& _telemetryService;
 	managers::PowerManager& _powerManager;
 	managers::OtaManager& _otaManager;
+	drivers::RelayDriver& _relayDriver;
+	managers::RelayManager& _relayManager;
+	drivers::FuelDriver& _fuelDriver;
+	managers::FuelManager& _fuelManager;
+	drivers::RtcDriver& _rtcDriver;
+	drivers::SdDriver& _sdDriver;
 	bool _initialized;
 	bool _running;
 };
