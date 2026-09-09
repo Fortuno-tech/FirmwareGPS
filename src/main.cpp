@@ -73,7 +73,6 @@ fortico::drivers::Sim7600PowerDriver g_sim7600PowerDriver(g_gpioHal, g_delayHal)
 fortico::services::Sim7600Service g_sim7600Service(g_sim7600);
 fortico::drivers::Sim7600GnssDriver g_gpsDriver(g_sim7600);
 fortico::services::GpsService g_gpsService(g_gpsDriver);
-fortico::middleware::CellularMqttClient g_mqttClient(g_sim7600);
 
 fortico::core::EventBus g_eventBus;
 fortico::core::MemoryMonitor g_memoryMonitor;
@@ -90,6 +89,7 @@ fortico::managers::FuelManager g_fuelManager(g_fuelDriver);
 fortico::core::ErrorHandler g_errorHandler(&g_eventBus);
 fortico::hal::SerialLogSink g_serialLogSink;
 fortico::core::Logger g_logger;
+fortico::middleware::CellularMqttClient g_mqttClient(g_sim7600, g_logger);
 fortico::services::SecurityService g_securityService(g_nvsDriver);
 fortico::services::StorageService g_storageService(
     g_nvsDriver, g_securityService, &g_sdDriver);

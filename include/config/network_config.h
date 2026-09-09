@@ -92,7 +92,8 @@ constexpr uint32_t WIFI_PROVISIONING_PORTAL_TIMEOUT_MS = 300000;
  * @warning [ASSUMPTION] Valeur d'exemple — à confirmer avec l'équipe backend
  *          avant implémentation figée (Document 08, note en tête).
  */
-constexpr const char* MQTT_BROKER_HOST = "mqtt.fortico.example";
+constexpr const char* MQTT_BROKER_HOST =
+    "4ea471d3375a4794bb74bc0383c912d0.s1.eu.hivemq.cloud";
 
 /// Port du broker MQTT — TLS obligatoire (R-05, SOP §4.1)
 constexpr uint16_t MQTT_BROKER_PORT = 8883;

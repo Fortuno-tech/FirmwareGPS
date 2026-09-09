@@ -25,6 +25,13 @@ public:
 
 	bool sendCommand(const char* command, char* response,
 					 std::size_t responseSize, uint32_t timeoutMs);
+	/// Attend l'URC final MQTT attendu ; un simple "OK" intermÃ©diaire ne suffit pas.
+	bool sendMqttCommand(const char* command, const char* successfulUrc,
+						 char* response, std::size_t responseSize,
+						 uint32_t timeoutMs);
+	/// Envoie une commande CMQTTxxx qui attend ensuite un topic/payload brut.
+	bool beginMqttInput(const char* command, char* response,
+					std::size_t responseSize, uint32_t timeoutMs);
 	bool writeRaw(const uint8_t* data, std::size_t length,
 				  char* response, std::size_t responseSize,
 				  uint32_t timeoutMs);
@@ -41,8 +48,12 @@ public:
 	bool activatePdp(uint32_t timeoutMs);
 	bool getIpAddress(char* ipAddress, std::size_t ipAddressSize);
 	bool isDataConnected() const;
+	bool hasCertificate(const char* certificateFile);
 
 private:
+	bool sendCommandUntil(const char* command, const char* completionToken,
+						  char* response, std::size_t responseSize,
+						  uint32_t timeoutMs);
 	bool sendDiagnosticCommand(const char* command, char* response,
 						   std::size_t responseSize, uint32_t timeoutMs);
 	void drainInput();

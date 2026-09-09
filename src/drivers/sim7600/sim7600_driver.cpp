@@ -84,8 +84,29 @@ void Sim7600Driver::reset()
 bool Sim7600Driver::sendCommand(const char* command, char* response,
 								std::size_t responseSize, uint32_t timeoutMs)
 {
+	return sendCommandUntil(command, "\nOK", response, responseSize, timeoutMs);
+}
+
+bool Sim7600Driver::sendMqttCommand(const char* command,
+								const char* successfulUrc, char* response,
+								std::size_t responseSize, uint32_t timeoutMs)
+{
+	return sendCommandUntil(command, successfulUrc, response, responseSize,
+							timeoutMs);
+}
+
+bool Sim7600Driver::beginMqttInput(const char* command, char* response,
+								  std::size_t responseSize, uint32_t timeoutMs)
+{
+	return sendCommandUntil(command, ">", response, responseSize, timeoutMs);
+}
+
+bool Sim7600Driver::sendCommandUntil(const char* command,
+								  const char* completionToken, char* response,
+								  std::size_t responseSize, uint32_t timeoutMs)
+{
 	if (!_initialized || !_active || command == nullptr || response == nullptr ||
-		responseSize < 2U) {
+		responseSize < 2U || completionToken == nullptr || completionToken[0] == '\0') {
 		return false;
 	}
 
@@ -110,8 +131,7 @@ bool Sim7600Driver::sendCommand(const char* command, char* response,
 		}
 		response[length++] = static_cast<char>(byte);
 		response[length] = '\0';
-		if (std::strstr(response, "\r\nOK") != nullptr ||
-			std::strstr(response, "\nOK") != nullptr) {
+		if (std::strstr(response, completionToken) != nullptr) {
 			return true;
 		}
 		if (std::strstr(response, "\r\nERROR") != nullptr ||
@@ -141,8 +161,9 @@ bool Sim7600Driver::writeRaw(const uint8_t* data, std::size_t length,
 		}
 		response[received++] = static_cast<char>(byte);
 		response[received] = '\0';
-		if (std::strstr(response, "OK") != nullptr) return true;
-		if (std::strstr(response, "ERROR") != nullptr) return false;
+		if (std::strstr(response, "\nOK") != nullptr) return true;
+		if (std::strstr(response, "\r\nERROR") != nullptr ||
+			std::strstr(response, "\nERROR") != nullptr) return false;
 	}
 	return false;
 }
@@ -158,7 +179,8 @@ bool Sim7600Driver::getModemInformation(char* information,
 {
 	return sendDiagnosticCommand("ATI", information, informationSize,
 							 hardware::SIM7600_AT_TIMEOUT_LONG_MS) &&
-		std::strstr(information, "SIMCOM") != nullptr;
+		(std::strstr(information, "SIMCOM") != nullptr ||
+		 std::strstr(information, "SIM7600") != nullptr);
 }
 
 bool Sim7600Driver::isSimReady()
@@ -280,6 +302,15 @@ bool Sim7600Driver::getIpAddress(char* ipAddress, std::size_t ipAddressSize)
 bool Sim7600Driver::isDataConnected() const
 {
 	return _initialized && _active && _dataConnected;
+}
+
+bool Sim7600Driver::hasCertificate(const char* certificateFile)
+{
+	if (certificateFile == nullptr || certificateFile[0] == '\0') return false;
+	char response[512]{};
+	return sendCommand("AT+CCERTLIST", response, sizeof(response),
+					   hardware::SIM7600_AT_TIMEOUT_LONG_MS) &&
+		std::strstr(response, certificateFile) != nullptr;
 }
 
 bool Sim7600Driver::sendDiagnosticCommand(const char* command, char* response,
