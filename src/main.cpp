@@ -17,6 +17,7 @@
 #include "drivers/sd/sd_driver.h"
 #include "drivers/rfid/rfid_driver.h"
 #include "drivers/sim7600/sim7600_driver.h"
+#include "drivers/sim7600/sim7600_power_driver.h"
 #include "drivers/gps/sim7600_gnss_driver.h"
 #include "middleware/mqtt_client/cellular_mqtt_client.h"
 #include "hal/gpio/gpio_hal.h"
@@ -64,6 +65,7 @@ fortico::drivers::RtcDriver g_rtcDriver(g_i2cHal);
 fortico::drivers::SdDriver g_sdDriver(g_spiHal);
 fortico::drivers::RfidDriver g_rfidDriver(g_i2cHal);
 fortico::drivers::Sim7600Driver g_sim7600(g_uartHal);
+fortico::drivers::Sim7600PowerDriver g_sim7600PowerDriver(g_gpioHal);
 fortico::services::Sim7600Service g_sim7600Service(g_sim7600);
 fortico::drivers::Sim7600GnssDriver g_gpsDriver(g_sim7600);
 fortico::services::GpsService g_gpsService(g_gpsDriver);
@@ -92,7 +94,7 @@ fortico::managers::AlertManager g_alertManager(g_button, g_buzzer, g_led);
 fortico::services::RfidService g_rfidService(
     g_rfidDriver, g_authenticationService, g_eventBus);
 fortico::interfaces::IDriver* g_diagnosticDrivers[] = {
-    &g_battery, &g_rfidDriver, &g_sim7600, &g_relayDriver,
+    &g_battery, &g_rfidDriver, &g_sim7600PowerDriver, &g_sim7600, &g_relayDriver,
     &g_fuelDriver, &g_rtcDriver, &g_sdDriver};
 fortico::managers::DiagnosticsManager g_diagnosticsManager(
     g_diagnosticDrivers, sizeof(g_diagnosticDrivers) / sizeof(g_diagnosticDrivers[0]));
@@ -108,6 +110,7 @@ fortico::app::Application g_application(
     g_alertManager,
     g_authenticationService,
     g_rfidService,
+    g_sim7600PowerDriver,
     g_sim7600Service,
     g_gpsService,
     g_diagnosticsService,

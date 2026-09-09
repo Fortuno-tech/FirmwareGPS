@@ -8,6 +8,7 @@
 #include "drivers/fuel/fuel_driver.h"
 #include "drivers/rtc/rtc_driver.h"
 #include "drivers/sd/sd_driver.h"
+#include "drivers/sim7600/sim7600_power_driver.h"
 #include "managers/alert_manager/alert_manager.hpp"
 #include "managers/relay_manager/relay_manager.h"
 #include "managers/fuel_manager/fuel_manager.h"
@@ -33,6 +34,7 @@ public:
 					 managers::AlertManager& alertManager,
 					 services::AuthenticationService& authenticationService,
 					 services::RfidService& rfidService,
+					 drivers::Sim7600PowerDriver& sim7600PowerDriver,
 					 services::Sim7600Service& sim7600Service,
 					 services::GpsService& gpsService,
 					 services::DiagnosticsService& diagnosticsService,
@@ -65,6 +67,7 @@ private:
 	managers::AlertManager& _alertManager;
 	services::AuthenticationService& _authenticationService;
 	services::RfidService& _rfidService;
+	drivers::Sim7600PowerDriver& _sim7600PowerDriver;
 	services::Sim7600Service& _sim7600Service;
 	services::GpsService& _gpsService;
 	services::DiagnosticsService& _diagnosticsService;

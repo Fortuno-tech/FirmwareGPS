@@ -28,6 +28,7 @@ public:
 				managers::AlertManager& alertManager,
 				services::AuthenticationService& authenticationService,
 				services::RfidService& rfidService,
+				drivers::Sim7600PowerDriver& sim7600PowerDriver,
 				services::Sim7600Service& sim7600Service,
 				services::GpsService& gpsService,
 				services::DiagnosticsService& diagnosticsService,

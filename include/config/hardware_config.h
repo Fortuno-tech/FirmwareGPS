@@ -75,6 +75,18 @@ constexpr uint8_t SIM7600_AT_MAX_ATTEMPTS = 5U;
 /// Délai entre deux tentatives AT de démarrage.
 constexpr uint32_t SIM7600_AT_RETRY_DELAY_MS = 2000U;
 
+/// Niveau stable appliqué à K/PWRKEY lorsque le modem n'est pas sollicité.
+constexpr bool SIM7600_PWRKEY_IDLE_LEVEL = true;
+
+/// Stabilisation du niveau idle avant l'impulsion de démarrage.
+constexpr uint32_t SIM7600_PWRKEY_SETTLE_MS = 100U;
+
+/// Durée de l'impulsion basse K/PWRKEY requise par le breakout SIM7600.
+constexpr uint32_t SIM7600_PWRKEY_PULSE_MS = 1500U;
+
+/// Délai après l'impulsion K/PWRKEY avant le premier échange AT.
+constexpr uint32_t SIM7600_BOOT_DELAY_MS = 5000U;
+
 /**
  * @brief Timeout de la commande d'interrogation de position GNSS
  *        (AT+CGPSINFO / AT+CGNSSINFO), plus longue qu'une commande AT

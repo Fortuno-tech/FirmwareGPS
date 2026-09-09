@@ -8,7 +8,9 @@ namespace app {
 SystemController::SystemController(
 	core::EventBus& eventBus, managers::AlertManager& alertManager,
 	services::AuthenticationService& authenticationService,
-	services::RfidService& rfidService, services::Sim7600Service& sim7600Service,
+	services::RfidService& rfidService,
+	drivers::Sim7600PowerDriver& sim7600PowerDriver,
+	services::Sim7600Service& sim7600Service,
 	services::GpsService& gpsService,
 	services::DiagnosticsService& diagnosticsService,
 	core::PowerMonitor& powerMonitor, core::ErrorHandler& errorHandler,
@@ -22,7 +24,8 @@ SystemController::SystemController(
 	middleware::CellularMqttClient& mqttClient)
 	: _eventBus(eventBus), _alertManager(alertManager),
 	  _authenticationService(authenticationService), _rfidService(rfidService),
-	  _sim7600Service(sim7600Service), _gpsService(gpsService),
+	  _sim7600PowerDriver(sim7600PowerDriver), _sim7600Service(sim7600Service),
+	  _gpsService(gpsService),
 	  _diagnosticsService(diagnosticsService),
 	  _powerMonitor(powerMonitor), _errorHandler(errorHandler),
 	  _securityService(securityService), _storageService(storageService),
@@ -83,8 +86,17 @@ bool SystemController::start()
 		_telemetryService.stop();
 		return false;
 	}
+	if (_sim7600PowerDriver.init() != constants::ErrorCode::OK ||
+		!_sim7600PowerDriver.start() || !_sim7600PowerDriver.powerOn()) {
+		_errorHandler.report(constants::ErrorCode::MODEM_AT_TIMEOUT);
+		_authenticationService.stop();
+		_diagnosticsService.stop();
+		_telemetryService.stop();
+		return false;
+	}
 	if (!_sim7600Service.start()) {
 		_errorHandler.report(constants::ErrorCode::MODEM_AT_TIMEOUT);
+		_sim7600PowerDriver.stop();
 		_authenticationService.stop();
 		_diagnosticsService.stop();
 		_telemetryService.stop();
@@ -93,6 +105,7 @@ bool SystemController::start()
 	if (!_gpsService.start()) {
 		_errorHandler.report(constants::ErrorCode::GNSS_TIMEOUT);
 		_sim7600Service.stop();
+		_sim7600PowerDriver.stop();
 		_authenticationService.stop();
 		_diagnosticsService.stop();
 		_telemetryService.stop();
@@ -105,6 +118,7 @@ bool SystemController::start()
 		_errorHandler.report(constants::ErrorCode::MODEM_REGISTRATION_FAILED);
 		_gpsService.stop();
 		_sim7600Service.stop();
+		_sim7600PowerDriver.stop();
 		_authenticationService.stop();
 		_diagnosticsService.stop();
 		_telemetryService.stop();
@@ -117,6 +131,7 @@ bool SystemController::start()
 		_errorHandler.report(constants::ErrorCode::MQTT_CONNECT_FAILED);
 		_gpsService.stop();
 		_sim7600Service.stop();
+		_sim7600PowerDriver.stop();
 		_authenticationService.stop();
 		_diagnosticsService.stop();
 		_telemetryService.stop();
@@ -126,6 +141,7 @@ bool SystemController::start()
 		_mqttClient.disconnect();
 		_gpsService.stop();
 		_sim7600Service.stop();
+		_sim7600PowerDriver.stop();
 		_authenticationService.stop();
 		_diagnosticsService.stop();
 		_telemetryService.stop();
@@ -136,6 +152,7 @@ bool SystemController::start()
 		_mqttClient.disconnect();
 		_gpsService.stop();
 		_sim7600Service.stop();
+		_sim7600PowerDriver.stop();
 		_authenticationService.stop();
 		_diagnosticsService.stop();
 		_telemetryService.stop();
@@ -176,6 +193,7 @@ void SystemController::stop()
 	_mqttClient.disconnect();
 	_gpsService.stop();
 	_sim7600Service.stop();
+	_sim7600PowerDriver.stop();
 	_relayDriver.stop();
 	_fuelDriver.stop();
 	_rtcDriver.stop();

@@ -81,7 +81,8 @@ constexpr uint8_t PN532_RESET = 26;
 constexpr uint8_t SIM7600_TX1 = 17;
 /// SIM7600E-L1C — UART1 RX depuis le modem
 constexpr uint8_t SIM7600_RX1 = 16;
-
+/// SIM7600E-L1C — commande K/PWRKEY (active bas via breakout compatible 3,3 V)
+constexpr uint8_t SIM7600_PWRKEY = 14;
 // ============================================================================
 // 6. Actionneur critique — Relais de coupure moteur (5V, 20A)
 //    RelayManager est l'UNIQUE propriétaire logiciel autorisé à écrire cette
