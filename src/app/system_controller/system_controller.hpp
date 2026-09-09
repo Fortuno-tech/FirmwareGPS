@@ -17,6 +17,7 @@
 #include "middleware/mqtt_client/cellular_mqtt_client.h"
 #include "services/authentication/authentication_service.h"
 #include "services/diagnostics/diagnostics_service.h"
+#include "services/gps/gps_service.h"
 #include "services/rfid/rfid_service.h"
 #include "services/security/security_service.h"
 #include "services/sim7600/sim7600_service.h"
@@ -33,6 +34,7 @@ public:
 					 services::AuthenticationService& authenticationService,
 					 services::RfidService& rfidService,
 					 services::Sim7600Service& sim7600Service,
+					 services::GpsService& gpsService,
 					 services::DiagnosticsService& diagnosticsService,
 					 core::PowerMonitor& powerMonitor,
 					 core::ErrorHandler& errorHandler,
@@ -64,6 +66,7 @@ private:
 	services::AuthenticationService& _authenticationService;
 	services::RfidService& _rfidService;
 	services::Sim7600Service& _sim7600Service;
+	services::GpsService& _gpsService;
 	services::DiagnosticsService& _diagnosticsService;
 	core::PowerMonitor& _powerMonitor;
 	core::ErrorHandler& _errorHandler;

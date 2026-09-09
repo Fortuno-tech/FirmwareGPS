@@ -8,6 +8,7 @@
 #include "managers/alert_manager/alert_manager.hpp"
 #include "services/authentication/authentication_service.h"
 #include "services/rfid/rfid_service.h"
+#include "services/gps/gps_service.h"
 #include "services/sim7600/sim7600_service.h"
 #include "services/diagnostics/diagnostics_service.h"
 #include "core/power/power_monitor.h"
@@ -28,6 +29,7 @@ public:
 				services::AuthenticationService& authenticationService,
 				services::RfidService& rfidService,
 				services::Sim7600Service& sim7600Service,
+				services::GpsService& gpsService,
 				services::DiagnosticsService& diagnosticsService,
 				core::PowerMonitor& powerMonitor,
 				core::ErrorHandler& errorHandler,

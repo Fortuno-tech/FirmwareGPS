@@ -4,6 +4,7 @@
 
 #include "interfaces/iservice.h"
 #include "managers/telemetry_manager/telemetry_manager.h"
+#include "services/gps/gps_service.h"
 
 namespace fortico {
 namespace services {
@@ -17,7 +18,8 @@ public:
 class TelemetryService : public interfaces::IService {
 public:
 	TelemetryService(managers::TelemetryManager& manager,
-					 ITelemetrySink* sink = nullptr);
+					 ITelemetrySink* sink = nullptr,
+					 const GpsService* gpsService = nullptr);
 	bool start() override;
 	void stop() override;
 	bool isRunning() const override;
@@ -27,6 +29,7 @@ public:
 private:
 	managers::TelemetryManager& _manager;
 	ITelemetrySink* _sink;
+	const GpsService* _gpsService;
 	char _payload[1024];
 	bool _running;
 };

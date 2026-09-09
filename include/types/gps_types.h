@@ -18,9 +18,13 @@ namespace types {
 struct GpsData {
     double latitude;
     double longitude;
+    float altitudeMeters;
     float speedKmh;     ///< si !fixValid, DOIT valoir constants::INVALID_SPEED (constants/default_values.h) — jamais 0.0f, voir note de sûreté dans ce fichier
     float headingDeg;
+    float pdop;
+    float hdop;
     uint8_t satellites;
+    uint8_t fixMode;
     bool fixValid;      ///< Document 06 §4 : nécessite satellites >= GPS_MIN_SATELLITES_FOR_FIX
     uint64_t timestamp; ///< horodatage RTC (RtcDriver) ou fallback monotone (RtcHal) si RTC indisponible
 };
