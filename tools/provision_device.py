@@ -6,7 +6,7 @@ Generates or receives root key (AES-256-GCM), OTA Ed25519 public key,
 device ID, and MQTT credentials, then sends them to ESP32 via Serial interface.
 
 Usage:
-    python tools/provision_device.py --port COM3 [options]
+    python tools/provision_device.py --port COM6 [options]
 """
 
 import argparse
@@ -24,7 +24,7 @@ def generate_key_hex(length=32):
 
 def main():
     parser = argparse.ArgumentParser(description="Fortico ESP32 Provisioning Tool")
-    parser.add_argument("--port", required=True, help="Serial port (e.g. COM3 or /dev/ttyUSB0)")
+    parser.add_argument("--port", required=True, help="Serial port (e.g. COM6 or /dev/ttyUSB0)")
     parser.add_argument("--baud", type=int, default=115200, help="Baud rate (default: 115200)")
     parser.add_argument("--device-id", default="FORTICO-DEV-001", help="Device ID")
     parser.add_argument("--mqtt-client-id", default="FORTICO-DEV-001", help="MQTT Client ID")
@@ -69,27 +69,58 @@ def main():
 
     print(f"Connecting to {args.port} at {args.baud} baud...")
     try:
-        ser = serial.Serial(args.port, args.baud, timeout=5)
-        time.sleep(2)  # Wait for ESP32 reset after DTR/RTS toggle
-        ser.reset_input_buffer()
-        print("Sending provisioning payload...")
-        ser.write(payload.encode("utf-8"))
-        ser.flush()
+        ser = serial.Serial(args.port, args.baud, timeout=1)
 
-        response = ser.readline().decode("utf-8", errors="replace").strip()
-        print(f"ESP32 Response: {response}")
+        print("Listening for ESP32 readiness (PROV:READY)...")
+        start_time = time.time()
+        last_send_time = 0
+        got_ready = False
 
-        if "PROV:OK" in response:
-            print("SUCCESS: Device provisioned successfully!")
-        else:
-            print("FAILURE: Provisioning failed or rejected by ESP32.")
-            sys.exit(1)
+        while time.time() - start_time < 20:
+            if ser.in_waiting > 0:
+                line = ser.readline().decode("utf-8", errors="replace").strip()
+                if line:
+                    print(f"ESP32 Log: {line}")
+                    if "PROV:READY" in line or "[PROV] Device unprovisioned" in line:
+                        got_ready = True
+                        print("ESP32 is ready! Sending provisioning payload...")
+                        ser.write(payload.encode("utf-8"))
+                        ser.flush()
+                        last_send_time = time.time()
+                    elif "PROV:OK" in line:
+                        print("\n==================================================")
+                        print("SUCCESS: Device provisioned successfully!")
+                        print("==================================================")
+                        ser.close()
+                        sys.exit(0)
+                    elif "PROV:FAIL" in line:
+                        print("\nFAILURE: Provisioning rejected by ESP32 (already provisioned or invalid payload).")
+                        ser.close()
+                        sys.exit(1)
 
+            # If 2 seconds passed without PROV:READY, send payload anyway and retry every 1.5s
+            now = time.time()
+            if not got_ready and (now - start_time > 2.0) and (now - last_send_time > 1.5):
+                print("Sending provisioning payload (retry)...")
+                ser.write(payload.encode("utf-8"))
+                ser.flush()
+                last_send_time = now
+            elif got_ready and (now - last_send_time > 1.5):
+                print("Re-sending payload...")
+                ser.write(payload.encode("utf-8"))
+                ser.flush()
+                last_send_time = now
+
+            time.sleep(0.05)
+
+        print("\nFAILURE: Timeout reached without PROV:OK response.")
+        print("Note: If the ESP32 is already provisioned, run 'pio run -t erase' to clear NVS.")
         ser.close()
+        sys.exit(1)
+
     except Exception as e:
         print(f"Serial Error: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
     main()
-

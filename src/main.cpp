@@ -130,7 +130,9 @@ void handleSerialProvisioning(fortico::services::ProvisioningService& provisioni
     }
 
     Serial.println(F("[PROV] Device unprovisioned. Waiting 30s for PROV payload on Serial..."));
+    Serial.println(F("PROV:READY"));
     const uint32_t startMs = millis();
+
     String line = "";
 
     while (millis() - startMs < 30000U) {
