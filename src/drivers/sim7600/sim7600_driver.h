@@ -4,6 +4,7 @@
 #include <cstdint>
 
 #include "constants/errors.h"
+#include "hal/delay/delay_hal.h"
 #include "hal/uart/uart_hal.h"
 #include "interfaces/idriver.h"
 
@@ -12,7 +13,7 @@ namespace drivers {
 
 class Sim7600Driver : public interfaces::IDriver {
 public:
-	explicit Sim7600Driver(hal::UartHal& uartHal);
+	Sim7600Driver(hal::UartHal& uartHal, hal::DelayHal& delayHal);
 
 	constants::ErrorCode init() override;
 	constants::ErrorCode poll() override;
@@ -47,6 +48,7 @@ private:
 	void drainInput();
 
 	hal::UartHal& _uartHal;
+	hal::DelayHal& _delayHal;
 	bool _initialized;
 	bool _healthy;
 	bool _active;

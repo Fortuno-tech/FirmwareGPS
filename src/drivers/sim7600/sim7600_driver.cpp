@@ -7,15 +7,11 @@
 #include "config/pin_config.h"
 #include "utils/timer_utils.h"
 
-#ifdef ESP32_TARGET
-#include <Arduino.h>
-#endif
-
 namespace fortico {
 namespace drivers {
 
-Sim7600Driver::Sim7600Driver(hal::UartHal& uartHal)
-	: _uartHal(uartHal), _initialized(false), _healthy(false), _active(false),
+Sim7600Driver::Sim7600Driver(hal::UartHal& uartHal, hal::DelayHal& delayHal)
+	: _uartHal(uartHal), _delayHal(delayHal), _initialized(false), _healthy(false), _active(false),
 	  _dataConnected(false)
 {
 }
@@ -38,7 +34,7 @@ constants::ErrorCode Sim7600Driver::init()
 			return constants::ErrorCode::OK;
 		}
 		if (attempt + 1U < hardware::SIM7600_AT_MAX_ATTEMPTS) {
-			delay(hardware::SIM7600_AT_RETRY_DELAY_MS);
+			_delayHal.waitMs(hardware::SIM7600_AT_RETRY_DELAY_MS);
 		}
 	}
 	_healthy = false;
@@ -104,11 +100,14 @@ bool Sim7600Driver::sendCommand(const char* command, char* response,
 	}
 
 	std::size_t length = 0U;
-	    const uint32_t startMs = utils::Timer::millis();
-	    while (utils::Timer::millis() - startMs < timeoutMs &&
+	const uint32_t startMs = utils::Timer::millis();
+	while (utils::Timer::millis() - startMs < timeoutMs &&
 		    length + 1U < responseSize) {
 		uint8_t byte = 0U;
-		if (_uartHal.read(&byte, 1U, 1U) == 0U) continue;
+		if (_uartHal.read(&byte, 1U, 1U) == 0U) {
+			_delayHal.waitMs(1U);
+			continue;
+		}
 		response[length++] = static_cast<char>(byte);
 		response[length] = '\0';
 		if (std::strstr(response, "\r\nOK") != nullptr ||
@@ -136,7 +135,10 @@ bool Sim7600Driver::writeRaw(const uint8_t* data, std::size_t length,
 	while (utils::Timer::millis() - startMs < timeoutMs &&
 		   received + 1U < responseSize) {
 		uint8_t byte = 0U;
-		if (_uartHal.read(&byte, 1U, 1U) == 0U) continue;
+		if (_uartHal.read(&byte, 1U, 1U) == 0U) {
+			_delayHal.waitMs(1U);
+			continue;
+		}
 		response[received++] = static_cast<char>(byte);
 		response[received] = '\0';
 		if (std::strstr(response, "OK") != nullptr) return true;
@@ -218,9 +220,7 @@ bool Sim7600Driver::waitForNetwork(uint32_t timeoutMs)
 		if (isNetworkRegistered() && hasRadioService()) {
 			return true;
 		}
-#ifdef ESP32_TARGET
-		delay(1000U);
-#endif
+		_delayHal.waitMs(1000U);
 	}
 	return false;
 }

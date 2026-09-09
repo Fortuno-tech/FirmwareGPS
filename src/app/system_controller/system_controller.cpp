@@ -14,6 +14,7 @@ SystemController::SystemController(
 	services::GpsService& gpsService,
 	services::DiagnosticsService& diagnosticsService,
 	core::PowerMonitor& powerMonitor, core::ErrorHandler& errorHandler,
+	core::Logger& logger,
 	services::SecurityService& securityService,
 	services::StorageService& storageService,
 	services::TelemetryService& telemetryService,
@@ -28,44 +29,46 @@ SystemController::SystemController(
 	  _gpsService(gpsService),
 	  _diagnosticsService(diagnosticsService),
 	  _powerMonitor(powerMonitor), _errorHandler(errorHandler),
+	  _logger(logger),
 	  _securityService(securityService), _storageService(storageService),
 	  _telemetryService(telemetryService), _powerManager(powerManager),
 	  _otaManager(otaManager), _relayDriver(relayDriver),
 	  _relayManager(relayManager), _fuelDriver(fuelDriver),
 	  _fuelManager(fuelManager), _rtcDriver(rtcDriver), _sdDriver(sdDriver),
 	  _mqttClient(mqttClient),
-	  _initialized(false), _running(false)
+	  _initialized(false), _running(false), _bootStage(BootStage::Idle)
 {
 }
 
 bool SystemController::init()
 {
 	if (_initialized) return true;
+	setBootStage(BootStage::Starting, "initialisation des composants Fortico");
 	if (!_eventBus.init()) {
-		_errorHandler.report(constants::ErrorCode::UNKNOWN);
-		return false;
+		return failBoot("initialisation EventBus impossible",
+						constants::ErrorCode::UNKNOWN);
 	}
 	if (!_powerMonitor.init()) {
-		_errorHandler.report(constants::ErrorCode::BATTERY_SENSOR_FAILURE);
-		return false;
+		return failBoot("initialisation mesure batterie impossible",
+						constants::ErrorCode::BATTERY_SENSOR_FAILURE);
 	}
 	_powerManager.init();
 	_otaManager.init();
 	_relayManager.init();
 	if (_fuelDriver.init() != constants::ErrorCode::OK ||
 		_rtcDriver.init() != constants::ErrorCode::OK) {
-		_errorHandler.report(constants::ErrorCode::UNKNOWN);
-		return false;
+		return failBoot("initialisation driver fuel ou RTC impossible",
+						constants::ErrorCode::UNKNOWN);
 	}
 	_sdDriver.init();
 	if (!_securityService.start()) {
-		_errorHandler.report(constants::ErrorCode::NVS_READ_FAILED);
-		return false;
+		return failBoot("initialisation stockage securise impossible",
+						constants::ErrorCode::NVS_READ_FAILED);
 	}
 	if (!_storageService.start()) {
-		_errorHandler.report(constants::ErrorCode::NVS_READ_FAILED);
 		_securityService.stop();
-		return false;
+		return failBoot("initialisation service de stockage impossible",
+						constants::ErrorCode::NVS_READ_FAILED);
 	}
 	_alertManager.init();
 	_alertManager.subscribeTo(_eventBus);
@@ -76,34 +79,45 @@ bool SystemController::init()
 bool SystemController::start()
 {
 	if (!_initialized || _running) return _running;
-	if (!_authenticationService.start()) return false;
+	setBootStage(BootStage::Starting, "demarrage des services Fortico");
+	if (!_authenticationService.start()) {
+		return failBoot("demarrage authentification impossible",
+						constants::ErrorCode::UNKNOWN);
+	}
 	if (!_telemetryService.start()) {
 		_authenticationService.stop();
-		return false;
+		return failBoot("demarrage telemetrie impossible",
+						constants::ErrorCode::UNKNOWN);
 	}
 	if (!_diagnosticsService.start()) {
 		_authenticationService.stop();
 		_telemetryService.stop();
-		return false;
+		return failBoot("demarrage diagnostics impossible",
+						constants::ErrorCode::UNKNOWN);
 	}
+	setBootStage(BootStage::PoweringModem, "impulsion K/PWRKEY SIM7600");
 	if (_sim7600PowerDriver.init() != constants::ErrorCode::OK ||
 		!_sim7600PowerDriver.start() || !_sim7600PowerDriver.powerOn()) {
-		_errorHandler.report(constants::ErrorCode::MODEM_AT_TIMEOUT);
+		failBoot("echec du controle K/PWRKEY SIM7600",
+				 constants::ErrorCode::MODEM_AT_TIMEOUT);
 		_authenticationService.stop();
 		_diagnosticsService.stop();
 		_telemetryService.stop();
 		return false;
 	}
+	setBootStage(BootStage::InitializingModem, "handshake AT SIM7600");
 	if (!_sim7600Service.start()) {
-		_errorHandler.report(constants::ErrorCode::MODEM_AT_TIMEOUT);
+		failBoot("SIM7600 ne repond pas aux commandes AT",
+				 constants::ErrorCode::MODEM_AT_TIMEOUT);
 		_sim7600PowerDriver.stop();
 		_authenticationService.stop();
 		_diagnosticsService.stop();
 		_telemetryService.stop();
 		return false;
 	}
+	setBootStage(BootStage::InitializingGnss, "activation du GNSS SIM7600");
 	if (!_gpsService.start()) {
-		_errorHandler.report(constants::ErrorCode::GNSS_TIMEOUT);
+		failBoot("activation GNSS impossible", constants::ErrorCode::GNSS_TIMEOUT);
 		_sim7600Service.stop();
 		_sim7600PowerDriver.stop();
 		_authenticationService.stop();
@@ -111,11 +125,13 @@ bool SystemController::start()
 		_telemetryService.stop();
 		return false;
 	}
+	setBootStage(BootStage::RegisteringNetwork, "enregistrement reseau mobile");
 	if (!_sim7600Service.waitForNetwork(
 			network::MODEM_NETWORK_REGISTRATION_TIMEOUT_MS) ||
 		!_sim7600Service.connectInternet(
 			network::APN_DEFAULT, network::MODEM_PDP_CONTEXT_TIMEOUT_MS)) {
-		_errorHandler.report(constants::ErrorCode::MODEM_REGISTRATION_FAILED);
+		failBoot("enregistrement reseau ou contexte PDP impossible",
+				 constants::ErrorCode::MODEM_REGISTRATION_FAILED);
 		_gpsService.stop();
 		_sim7600Service.stop();
 		_sim7600PowerDriver.stop();
@@ -124,11 +140,13 @@ bool SystemController::start()
 		_telemetryService.stop();
 		return false;
 	}
+	logSim7600Diagnostics();
+	setBootStage(BootStage::ConnectingMqtt, "connexion MQTT cellulaire");
 	types::MqttCredentials credentials{};
 	if (!_securityService.loadMqttCredentials(credentials) ||
 		!_mqttClient.setCredentials(credentials) ||
 		!_mqttClient.connect(network::MQTT_BROKER_HOST, network::MQTT_BROKER_PORT)) {
-		_errorHandler.report(constants::ErrorCode::MQTT_CONNECT_FAILED);
+		failBoot("connexion MQTT impossible", constants::ErrorCode::MQTT_CONNECT_FAILED);
 		_gpsService.stop();
 		_sim7600Service.stop();
 		_sim7600PowerDriver.stop();
@@ -137,6 +155,7 @@ bool SystemController::start()
 		_telemetryService.stop();
 		return false;
 	}
+	setBootStage(BootStage::StartingServices, "demarrage RFID et EventBus");
 	if (!_rfidService.start()) {
 		_mqttClient.disconnect();
 		_gpsService.stop();
@@ -145,7 +164,7 @@ bool SystemController::start()
 		_authenticationService.stop();
 		_diagnosticsService.stop();
 		_telemetryService.stop();
-		return false;
+		return failBoot("demarrage RFID impossible", constants::ErrorCode::UNKNOWN);
 	}
 	if (!_eventBus.start()) {
 		_rfidService.stop();
@@ -156,14 +175,16 @@ bool SystemController::start()
 		_authenticationService.stop();
 		_diagnosticsService.stop();
 		_telemetryService.stop();
-		return false;
+		return failBoot("demarrage EventBus impossible", constants::ErrorCode::UNKNOWN);
 	}
 	if (!_relayDriver.start() || !_fuelDriver.start() || !_rtcDriver.start()) {
 		stop();
-		return false;
+		return failBoot("demarrage driver relais, fuel ou RTC impossible",
+						constants::ErrorCode::UNKNOWN);
 	}
 	_sdDriver.start();
 	_running = true;
+	setBootStage(BootStage::Ready, "Fortico operationnel");
 	return true;
 }
 
@@ -210,6 +231,41 @@ bool SystemController::isInitialized() const { return _initialized; }
 bool SystemController::isRunning() const { return _running; }
 core::PowerState SystemController::powerState() const { return _powerMonitor.state(); }
 bool SystemController::hasFault() const { return _errorHandler.hasError(); }
+BootStage SystemController::bootStage() const { return _bootStage; }
+
+void SystemController::setBootStage(BootStage stage, const char* message)
+{
+	_bootStage = stage;
+	_logger.info(logging::TAG_SYSTEM_CONTROLLER, "%s", message);
+}
+
+bool SystemController::failBoot(const char* message, constants::ErrorCode error)
+{
+	_bootStage = BootStage::Failed;
+	_errorHandler.report(error);
+	_logger.error(logging::TAG_SYSTEM_CONTROLLER, "%s", message);
+	return false;
+}
+
+void SystemController::logSim7600Diagnostics()
+{
+	services::Sim7600Diagnostics diagnostics{};
+	const bool complete = _sim7600Service.runDiagnostics(diagnostics);
+	_logger.info(logging::TAG_SIM7600,
+				 "diagnostic: modem=%s sim=%s signal=%s reseau=%s operateur=%s radio=%s paquet=%s data=%s",
+				 diagnostics.modemIdentified ? "ok" : "ko",
+				 diagnostics.simReady ? "ok" : "ko",
+				 diagnostics.signalAvailable ? "ok" : "ko",
+				 diagnostics.networkRegistered ? "ok" : "ko",
+				 diagnostics.operatorAvailable ? "ok" : "ko",
+				 diagnostics.radioServiceAvailable ? "ok" : "ko",
+				 diagnostics.packetAttached ? "ok" : "ko",
+				 diagnostics.dataConnected ? "ok" : "ko");
+	if (!complete) {
+		_logger.warn(logging::TAG_SIM7600,
+					 "diagnostic partiel: verifier SIM, antenne et enregistrement reseau");
+	}
+}
 
 }  // namespace app
 }  // namespace fortico

@@ -3,27 +3,11 @@
 #include "config/hardware_config.h"
 #include "config/pin_config.h"
 
-#ifdef ESP32_TARGET
-#include <Arduino.h>
-#endif
-
 namespace fortico {
 namespace drivers {
-namespace {
-
-void waitMs(uint32_t durationMs)
-{
-#ifdef ESP32_TARGET
-    delay(durationMs);
-#else
-    (void)durationMs;
-#endif
-}
-
-}  // namespace
-
-Sim7600PowerDriver::Sim7600PowerDriver(hal::GpioHal& gpioHal)
-    : _gpioHal(gpioHal), _initialized(false), _healthy(false), _active(false),
+Sim7600PowerDriver::Sim7600PowerDriver(hal::GpioHal& gpioHal,
+                                       hal::DelayHal& delayHal)
+	: _gpioHal(gpioHal), _delayHal(delayHal), _initialized(false), _healthy(false), _active(false),
       _powerOnIssued(false)
 {
 }
@@ -90,12 +74,12 @@ bool Sim7600PowerDriver::powerOn()
     if (_powerOnIssued) return true;
 
     _gpioHal.write(pins::SIM7600_PWRKEY, hardware::SIM7600_PWRKEY_IDLE_LEVEL);
-    waitMs(hardware::SIM7600_PWRKEY_SETTLE_MS);
+    _delayHal.waitMs(hardware::SIM7600_PWRKEY_SETTLE_MS);
     _gpioHal.write(pins::SIM7600_PWRKEY,
                    !hardware::SIM7600_PWRKEY_IDLE_LEVEL);
-    waitMs(hardware::SIM7600_PWRKEY_PULSE_MS);
+    _delayHal.waitMs(hardware::SIM7600_PWRKEY_PULSE_MS);
     _gpioHal.write(pins::SIM7600_PWRKEY, hardware::SIM7600_PWRKEY_IDLE_LEVEL);
-    waitMs(hardware::SIM7600_BOOT_DELAY_MS);
+    _delayHal.waitMs(hardware::SIM7600_BOOT_DELAY_MS);
 
     _powerOnIssued = true;
     return true;

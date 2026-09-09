@@ -25,6 +25,7 @@ namespace app {
 class Application {
 public:
 	Application(core::EventBus& eventBus,
+				core::Logger& logger,
 				managers::AlertManager& alertManager,
 				services::AuthenticationService& authenticationService,
 				services::RfidService& rfidService,

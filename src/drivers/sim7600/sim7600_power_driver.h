@@ -1,6 +1,7 @@
 #pragma once
 
 #include "hal/gpio/gpio_hal.h"
+#include "hal/delay/delay_hal.h"
 #include "interfaces/idriver.h"
 
 namespace fortico {
@@ -8,7 +9,7 @@ namespace drivers {
 
 class Sim7600PowerDriver final : public interfaces::IDriver {
 public:
-    explicit Sim7600PowerDriver(hal::GpioHal& gpioHal);
+	Sim7600PowerDriver(hal::GpioHal& gpioHal, hal::DelayHal& delayHal);
 
     constants::ErrorCode init() override;
     constants::ErrorCode poll() override;
@@ -22,7 +23,8 @@ public:
     bool powerOn();
 
 private:
-    hal::GpioHal& _gpioHal;
+	hal::GpioHal& _gpioHal;
+	hal::DelayHal& _delayHal;
     bool _initialized;
     bool _healthy;
     bool _active;

@@ -4,6 +4,7 @@
 #include "core/event_bus/event_bus.h"
 #include "core/diagnostics/diagnostics.h"
 #include "core/error_handler/error_handler.h"
+#include "core/logger/logger.h"
 #include "core/memory/memory_monitor.h"
 #include "core/power/power_monitor.h"
 #include "drivers/battery/battery_driver.h"
@@ -21,10 +22,12 @@
 #include "drivers/gps/sim7600_gnss_driver.h"
 #include "middleware/mqtt_client/cellular_mqtt_client.h"
 #include "hal/gpio/gpio_hal.h"
+#include "hal/delay/delay_hal.h"
 #include "hal/i2c/i2c_hal.h"
 #include "hal/uart/uart_hal.h"
 #include "hal/nvs/nvs_hal.h"
 #include "hal/spi/spi_hal.h"
+#include "hal/serial/serial_log_sink.h"
 #include "managers/alert_manager/alert_manager.hpp"
 #include "managers/relay_manager/relay_manager.h"
 #include "managers/fuel_manager/fuel_manager.h"
@@ -48,6 +51,7 @@
 namespace {
 
 fortico::hal::GpioHal g_gpioHal;
+fortico::hal::DelayHal g_delayHal;
 fortico::hal::I2cHal g_i2cHal;
 fortico::hal::UartHal g_uartHal;
 fortico::hal::AdcHal g_adcHal;
@@ -64,8 +68,8 @@ fortico::drivers::FuelDriver g_fuelDriver(g_adcHal);
 fortico::drivers::RtcDriver g_rtcDriver(g_i2cHal);
 fortico::drivers::SdDriver g_sdDriver(g_spiHal);
 fortico::drivers::RfidDriver g_rfidDriver(g_i2cHal);
-fortico::drivers::Sim7600Driver g_sim7600(g_uartHal);
-fortico::drivers::Sim7600PowerDriver g_sim7600PowerDriver(g_gpioHal);
+fortico::drivers::Sim7600Driver g_sim7600(g_uartHal, g_delayHal);
+fortico::drivers::Sim7600PowerDriver g_sim7600PowerDriver(g_gpioHal, g_delayHal);
 fortico::services::Sim7600Service g_sim7600Service(g_sim7600);
 fortico::drivers::Sim7600GnssDriver g_gpsDriver(g_sim7600);
 fortico::services::GpsService g_gpsService(g_gpsDriver);
@@ -84,6 +88,8 @@ fortico::managers::OtaManager g_otaManager(g_otaBackend, g_otaVerifier);
 fortico::managers::RelayManager g_relayManager(g_relayDriver);
 fortico::managers::FuelManager g_fuelManager(g_fuelDriver);
 fortico::core::ErrorHandler g_errorHandler(&g_eventBus);
+fortico::hal::SerialLogSink g_serialLogSink;
+fortico::core::Logger g_logger;
 fortico::services::SecurityService g_securityService(g_nvsDriver);
 fortico::services::StorageService g_storageService(
     g_nvsDriver, g_securityService, &g_sdDriver);
@@ -107,6 +113,7 @@ fortico::services::TelemetryService g_telemetryService(
     g_telemetryManager, &g_telemetrySink, &g_gpsService);
 fortico::app::Application g_application(
     g_eventBus,
+    g_logger,
     g_alertManager,
     g_authenticationService,
     g_rfidService,
@@ -190,7 +197,7 @@ void handleSerialProvisioning(fortico::services::ProvisioningService& provisioni
                 line += c;
             }
         }
-        delay(10);
+        g_delayHal.waitMs(10U);
     }
     Serial.println(F("[PROV] Provisioning timeout reached. Starting with default/unprovisioned state."));
 }
@@ -198,9 +205,19 @@ void handleSerialProvisioning(fortico::services::ProvisioningService& provisioni
 void setup()
 {
     Serial.begin(115200);
-    delay(250);
+    g_delayHal.waitMs(250U);
+
+    if (!g_logger.init(fortico::logging::DEVELOPMENT_MIN_LEVEL,
+                       &g_serialLogSink) || !g_logger.start()) {
+        Serial.println(F("[BOOT][ERROR] Logger initialization failed"));
+        return;
+    }
+    g_logger.info(fortico::logging::TAG_SYSTEM_CONTROLLER,
+                  "console de diagnostic active");
 
     if (g_nvsDriver.init() != fortico::constants::ErrorCode::OK) {
+		g_logger.error(fortico::logging::TAG_SYSTEM_CONTROLLER,
+					   "initialisation NVS impossible");
         return;
     }
 
@@ -219,14 +236,20 @@ void setup()
     g_authenticationManager.setCredentialStore(&g_storageService);
 
     if (!g_application.init()) {
+		g_logger.error(fortico::logging::TAG_SYSTEM_CONTROLLER,
+					   "initialisation application impossible");
         return;
     }
     g_started = g_application.start();
+	if (!g_started) {
+		g_logger.error(fortico::logging::TAG_SYSTEM_CONTROLLER,
+					   "demarrage application impossible");
+	}
 }
 
 void loop()
 {
     (void)g_started;
-    delay(10);
+    g_delayHal.waitMs(10U);
 }
 

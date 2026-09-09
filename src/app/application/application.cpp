@@ -3,7 +3,7 @@
 namespace fortico {
 namespace app {
 
-Application::Application(core::EventBus& eventBus,
+Application::Application(core::EventBus& eventBus, core::Logger& logger,
                          managers::AlertManager& alertManager,
                          services::AuthenticationService& authenticationService,
                          services::RfidService& rfidService,
@@ -29,7 +29,7 @@ Application::Application(core::EventBus& eventBus,
                         rfidService, sim7600PowerDriver, sim7600Service,
                         gpsService, diagnosticsService,
                         powerMonitor,
-                        errorHandler, securityService, storageService,
+                        errorHandler, logger, securityService, storageService,
                         telemetryService, powerManager, otaManager,
                         relayDriver, relayManager, fuelDriver, fuelManager,
                         rtcDriver, sdDriver, mqttClient),

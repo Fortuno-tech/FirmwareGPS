@@ -1,8 +1,11 @@
 #pragma once
 
+#include <cstdint>
+
 #include "core/diagnostics/diagnostics.h"
 #include "core/error_handler/error_handler.h"
 #include "core/event_bus/event_bus.h"
+#include "core/logger/logger.h"
 #include "core/power/power_monitor.h"
 #include "drivers/relay/relay_driver.h"
 #include "drivers/fuel/fuel_driver.h"
@@ -28,6 +31,19 @@
 namespace fortico {
 namespace app {
 
+enum class BootStage : uint8_t {
+	Idle,
+	Starting,
+	PoweringModem,
+	InitializingModem,
+	InitializingGnss,
+	RegisteringNetwork,
+	ConnectingMqtt,
+	StartingServices,
+	Ready,
+	Failed,
+};
+
 class SystemController {
 public:
 	SystemController(core::EventBus& eventBus,
@@ -40,6 +56,7 @@ public:
 					 services::DiagnosticsService& diagnosticsService,
 					 core::PowerMonitor& powerMonitor,
 					 core::ErrorHandler& errorHandler,
+					 core::Logger& logger,
 					 services::SecurityService& securityService,
 					 services::StorageService& storageService,
 					 services::TelemetryService& telemetryService,
@@ -61,6 +78,7 @@ public:
 		bool isRunning() const;
 		core::PowerState powerState() const;
 		bool hasFault() const;
+		BootStage bootStage() const;
 
 private:
 	core::EventBus& _eventBus;
@@ -73,6 +91,7 @@ private:
 	services::DiagnosticsService& _diagnosticsService;
 	core::PowerMonitor& _powerMonitor;
 	core::ErrorHandler& _errorHandler;
+	core::Logger& _logger;
 	services::SecurityService& _securityService;
 	services::StorageService& _storageService;
 	services::TelemetryService& _telemetryService;
@@ -87,6 +106,11 @@ private:
 	middleware::CellularMqttClient& _mqttClient;
 	bool _initialized;
 	bool _running;
+	BootStage _bootStage;
+
+	void setBootStage(BootStage stage, const char* message);
+	bool failBoot(const char* message, constants::ErrorCode error);
+	void logSim7600Diagnostics();
 };
 
 }  // namespace app
