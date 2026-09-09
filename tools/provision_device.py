@@ -114,7 +114,7 @@ def main():
             time.sleep(0.05)
 
         print("\nFAILURE: Timeout reached without PROV:OK response.")
-        print("Note: If the ESP32 is already provisioned, run 'pio run -t erase' to clear NVS.")
+        print("Note: Existing NVS provisioning is preserved; do not erase it to retry.")
         ser.close()
         sys.exit(1)
 
