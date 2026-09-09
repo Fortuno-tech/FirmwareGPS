@@ -433,7 +433,17 @@ bool SIM7600Driver::isInternetConnected()
 {
     return _dataConnected;
 }
+HardwareSerial& SIM7600Driver::getSerial()
+{
+    if (_serial == nullptr)
+    {
+        _serial = new HardwareSerial(
+            SIM7600_UART_NUMBER
+        );
+    }
 
+    return *_serial;
+}
 
 // ============================================================
 // GPS ENABLE

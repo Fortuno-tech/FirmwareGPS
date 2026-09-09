@@ -101,6 +101,11 @@ bool RFIDService::update()
             uid[i],
             HEX
         );
+
+        if (i + 1 < uidLength)
+        {
+            Serial.print(':');
+        }
     }
 
     Serial.println();
@@ -111,4 +116,42 @@ bool RFIDService::update()
 bool RFIDService::isReady() const
 {
     return _ready;
+}
+
+String RFIDService::getLastUIDString() const
+{
+    if (_uidLength == 0)
+    {
+        return "";
+    }
+
+    String uidString = "";
+
+    for (uint8_t i = 0; i < _uidLength; ++i)
+    {
+        if (_lastUid[i] < 0x10)
+        {
+            uidString += "0";
+        }
+
+        uidString += String(
+            _lastUid[i],
+            HEX
+        );
+
+        if (i + 1 < _uidLength)
+        {
+            uidString += ":";
+        }
+    }
+
+    uidString = uidString.substring(0);
+    uidString.toUpperCase();
+
+    return uidString;
+}
+
+bool RFIDService::hasCard() const
+{
+    return _uidLength > 0;
 }

@@ -4,7 +4,7 @@
 // =====================================================
 // FROTICO - HARDWARE CONFIGURATION
 // =====================================================
-
+#define TELEMETRY_INTERVAL_MS 5000UL
 // Debug UART
 #define DEBUG_BAUDRATE 115200
 
@@ -44,4 +44,9 @@
 #define GPS_FIX_CHECK_INTERVAL_MS       2000
 #define GPS_START_TIMEOUT_MS            120000
 #define GPS_INFO_TIMEOUT_MS             5000
+
+#define DHT_SENSOR_TYPE DHT22
+
+#define DHT_INTERVAL_MS 30000UL
+
 #endif

@@ -19,6 +19,10 @@ public:
 
     bool isReady() const;
 
+    String getLastUIDString() const;
+
+    bool hasCard() const;
+
 private:
 
     ForticoDrivers::PN532Driver& _driver;

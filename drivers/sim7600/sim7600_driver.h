@@ -71,6 +71,7 @@ public:
 
     bool isDataConnected() const;
 
+    HardwareSerial& getSerial();
 
 private:
 
