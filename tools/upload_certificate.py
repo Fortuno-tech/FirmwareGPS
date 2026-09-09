@@ -129,10 +129,6 @@ def upload_certificate(port: str, certificate_path: Path, replace: bool) -> None
             if b"ERROR" in response or not has_ok(response):
                 raise RuntimeError("SIM7600 refused AT+CCERTDELE")
 
-        response = send_command(ser, b"AT+CCERTDOWN=?", b"\nOK", 3.0)
-        if b"ERROR" in response or b"+CCERTDOWN:" not in response or not has_ok(response):
-            raise RuntimeError("SIM7600 does not support AT+CCERTDOWN")
-
         command = f'AT+CCERTDOWN="{CERTIFICATE_NAME}",{len(certificate)}'.encode("ascii")
         response = send_command(ser, command, b">", 5.0)
         if b"ERROR" in response or b">" not in response:

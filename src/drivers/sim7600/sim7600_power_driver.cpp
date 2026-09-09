@@ -85,5 +85,15 @@ bool Sim7600PowerDriver::powerOn()
     return true;
 }
 
+void Sim7600PowerDriver::setPowerOnIssued(bool issued)
+{
+    _powerOnIssued = issued;
+}
+
+bool Sim7600PowerDriver::isPowerOnIssued() const
+{
+    return _powerOnIssued;
+}
+
 }  // namespace drivers
 }  // namespace fortico

@@ -49,6 +49,9 @@ public:
 	bool getIpAddress(char* ipAddress, std::size_t ipAddressSize);
 	bool isDataConnected() const;
 	bool hasCertificate(const char* certificateFile);
+	bool deleteCertificate(const char* certificateFile);
+	bool downloadCertificate(const char* certificateFile, const uint8_t* certData,
+							 std::size_t certLen);
 
 private:
 	bool sendCommandUntil(const char* command, const char* completionToken,

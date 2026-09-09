@@ -142,55 +142,84 @@ bool g_started = false;
 
 void handleSerialProvisioning(fortico::services::ProvisioningService& provisioningService)
 {
-    if (provisioningService.isProvisioned()) {
-        return;
-    }
+    const bool alreadyProvisioned = provisioningService.isProvisioned();
+    const uint32_t timeoutMs = alreadyProvisioned ? 3000U : 30000U;
 
-    Serial.println(F("[PROV] Device unprovisioned. Waiting 30s for PROV payload on Serial..."));
+    if (!alreadyProvisioned) {
+        Serial.println(F("[PROV] Device unprovisioned. Waiting 30s for PROV payload on Serial..."));
+    } else {
+        Serial.println(F("[PROV] Device provisioned. Waiting 3s for serial commands..."));
+    }
     Serial.println(F("PROV:READY"));
-    const uint32_t startMs = millis();
 
     String line = "";
+    line.reserve(3000);
 
-    while (millis() - startMs < 30000U) {
+    uint32_t lastActivityMs = millis();
+    while (millis() - lastActivityMs < timeoutMs) {
         while (Serial.available() > 0) {
             const char c = static_cast<char>(Serial.read());
             if (c == '\n' || c == '\r') {
                 line.trim();
-                if (line.startsWith("PROV:")) {
-                    // Parse PROV:<rootKeyHex>:<otaPubKeyHex>:<deviceId>:<clientId>:<user>:<pass>
-                    int idx1 = line.indexOf(':', 5);
-                    int idx2 = line.indexOf(':', idx1 + 1);
-                    int idx3 = line.indexOf(':', idx2 + 1);
-                    int idx4 = line.indexOf(':', idx3 + 1);
-                    int idx5 = line.indexOf(':', idx4 + 1);
+                if (line.length() > 0) {
+                    lastActivityMs = millis();
 
-                    if (idx1 > 0 && idx2 > idx1 && idx3 > idx2 && idx4 > idx3 && idx5 > idx4) {
-                        String rootKeyHex = line.substring(5, idx1);
-                        String otaPubKeyHex = line.substring(idx1 + 1, idx2);
-                        String deviceId = line.substring(idx2 + 1, idx3);
-                        String clientId = line.substring(idx3 + 1, idx4);
-                        String username = line.substring(idx4 + 1, idx5);
-                        String password = line.substring(idx5 + 1);
+                    if (line == "PROV:CERT:CHECK") {
+                        if (provisioningService.hasModemCertificate("hivemq-ca.pem")) {
+                            Serial.println(F("PROV:CERT:PRESENT"));
+                        } else {
+                            Serial.println(F("PROV:CERT:ABSENT"));
+                        }
+                    } else if (line.startsWith("PROV:CERT:")) {
+                        // Format: PROV:CERT:<expectedSize>:<base64Data>
+                        int sepIdx = line.indexOf(':', 10);
+                        if (sepIdx > 10) {
+                            String sizeStr = line.substring(10, sepIdx);
+                            String base64Str = line.substring(sepIdx + 1);
+                            size_t expectedSize = static_cast<size_t>(sizeStr.toInt());
+                            if (provisioningService.installModemCertificate("hivemq-ca.pem", expectedSize, base64Str.c_str())) {
+                                Serial.println(F("PROV:CERT:OK"));
+                            } else {
+                                Serial.println(F("PROV:CERT:FAIL"));
+                            }
+                        } else {
+                            Serial.println(F("PROV:CERT:FAIL"));
+                        }
+                    } else if (line.startsWith("PROV:")) {
+                        // Parse PROV:<rootKeyHex>:<otaPubKeyHex>:<deviceId>:<clientId>:<user>:<pass>
+                        int idx1 = line.indexOf(':', 5);
+                        int idx2 = line.indexOf(':', idx1 + 1);
+                        int idx3 = line.indexOf(':', idx2 + 1);
+                        int idx4 = line.indexOf(':', idx3 + 1);
+                        int idx5 = line.indexOf(':', idx4 + 1);
 
-                        uint8_t rootKey[32] = {};
-                        uint8_t otaPubKey[32] = {};
+                        if (idx1 > 0 && idx2 > idx1 && idx3 > idx2 && idx4 > idx3 && idx5 > idx4) {
+                            String rootKeyHex = line.substring(5, idx1);
+                            String otaPubKeyHex = line.substring(idx1 + 1, idx2);
+                            String deviceId = line.substring(idx2 + 1, idx3);
+                            String clientId = line.substring(idx3 + 1, idx4);
+                            String username = line.substring(idx4 + 1, idx5);
+                            String password = line.substring(idx5 + 1);
 
-                        if (fortico::services::ProvisioningService::hexToBytes(rootKeyHex.c_str(), rootKey, 32) &&
-                            fortico::services::ProvisioningService::hexToBytes(otaPubKeyHex.c_str(), otaPubKey, 32)) {
+                            uint8_t rootKey[32] = {};
+                            uint8_t otaPubKey[32] = {};
 
-                            fortico::types::MqttCredentials creds{};
-                            strncpy(creds.clientId, clientId.c_str(), sizeof(creds.clientId) - 1);
-                            strncpy(creds.username, username.c_str(), sizeof(creds.username) - 1);
-                            strncpy(creds.password, password.c_str(), sizeof(creds.password) - 1);
+                            if (fortico::services::ProvisioningService::hexToBytes(rootKeyHex.c_str(), rootKey, 32) &&
+                                fortico::services::ProvisioningService::hexToBytes(otaPubKeyHex.c_str(), otaPubKey, 32)) {
 
-                            if (provisioningService.provisionDevice(rootKey, 32, otaPubKey, 32, creds, deviceId.c_str())) {
-                                Serial.println(F("PROV:OK"));
-                                return;
+                                fortico::types::MqttCredentials creds{};
+                                strncpy(creds.clientId, clientId.c_str(), sizeof(creds.clientId) - 1);
+                                strncpy(creds.username, username.c_str(), sizeof(creds.username) - 1);
+                                strncpy(creds.password, password.c_str(), sizeof(creds.password) - 1);
+
+                                if (provisioningService.provisionDevice(rootKey, 32, otaPubKey, 32, creds, deviceId.c_str())) {
+                                    Serial.println(F("PROV:OK"));
+                                    return;
+                                }
                             }
                         }
+                        Serial.println(F("PROV:FAIL"));
                     }
-                    Serial.println(F("PROV:FAIL"));
                 }
                 line = "";
             } else {
@@ -199,7 +228,7 @@ void handleSerialProvisioning(fortico::services::ProvisioningService& provisioni
         }
         g_delayHal.waitMs(10U);
     }
-    Serial.println(F("[PROV] Provisioning timeout reached. Starting with default/unprovisioned state."));
+    Serial.println(F("[PROV] Provisioning timeout reached. Starting with current state."));
 }
 
 void setup()
@@ -221,7 +250,17 @@ void setup()
         return;
     }
 
-    fortico::services::ProvisioningService provisioningService(g_securityService, g_nvsDriver);
+    g_sim7600PowerDriver.init();
+    g_sim7600PowerDriver.start();
+    if (g_sim7600.init() == fortico::constants::ErrorCode::OK) {
+        g_sim7600PowerDriver.setPowerOnIssued(true);
+    } else {
+        g_sim7600PowerDriver.powerOn();
+        g_sim7600.init();
+    }
+    g_sim7600.start();
+
+    fortico::services::ProvisioningService provisioningService(g_securityService, g_nvsDriver, &g_sim7600);
     handleSerialProvisioning(provisioningService);
 
     g_securityService.start();
@@ -231,7 +270,6 @@ void setup()
     if (otaKeyStore.loadPublicKey(otaPubKey)) {
         g_otaVerifier = fortico::managers::Ed25519OtaVerifier(otaPubKey);
     }
-
 
     g_authenticationManager.setCredentialStore(&g_storageService);
 

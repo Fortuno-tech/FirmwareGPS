@@ -87,6 +87,59 @@ void test_ota_key_store() {
     TEST_ASSERT_EQUAL_MEMORY(pubKey, loadedKey, 32);
 }
 
+void test_provisioning_service_base64_decode() {
+    uint8_t buffer[64] = {};
+    std::size_t outLen = sizeof(buffer);
+
+    // Test 1: "QUJD" -> "ABC"
+    TEST_ASSERT_TRUE(services::ProvisioningService::base64Decode("QUJD", 4, buffer, outLen));
+    TEST_ASSERT_EQUAL_UINT32(3, outLen);
+    TEST_ASSERT_EQUAL_UINT8('A', buffer[0]);
+    TEST_ASSERT_EQUAL_UINT8('B', buffer[1]);
+    TEST_ASSERT_EQUAL_UINT8('C', buffer[2]);
+
+    // Test 2: "QQ==" -> "A"
+    outLen = sizeof(buffer);
+    TEST_ASSERT_TRUE(services::ProvisioningService::base64Decode("QQ==", 4, buffer, outLen));
+    TEST_ASSERT_EQUAL_UINT32(1, outLen);
+    TEST_ASSERT_EQUAL_UINT8('A', buffer[0]);
+
+    // Test 3: "QUI=" -> "AB"
+    outLen = sizeof(buffer);
+    TEST_ASSERT_TRUE(services::ProvisioningService::base64Decode("QUI=", 4, buffer, outLen));
+    TEST_ASSERT_EQUAL_UINT32(2, outLen);
+    TEST_ASSERT_EQUAL_UINT8('A', buffer[0]);
+    TEST_ASSERT_EQUAL_UINT8('B', buffer[1]);
+
+    // Test 4: Trailing whitespace / newlines
+    outLen = sizeof(buffer);
+    TEST_ASSERT_TRUE(services::ProvisioningService::base64Decode("QUJD\r\n", 6, buffer, outLen));
+    TEST_ASSERT_EQUAL_UINT32(3, outLen);
+
+    // Test 5: Invalid length
+    outLen = sizeof(buffer);
+    TEST_ASSERT_FALSE(services::ProvisioningService::base64Decode("QUJ", 3, buffer, outLen));
+
+    // Test 6: Invalid character
+    outLen = sizeof(buffer);
+    TEST_ASSERT_FALSE(services::ProvisioningService::base64Decode("QU*D", 4, buffer, outLen));
+
+    // Test 7: Buffer too small
+    outLen = 2;
+    TEST_ASSERT_FALSE(services::ProvisioningService::base64Decode("QUJD", 4, buffer, outLen));
+}
+
+void test_provisioning_service_certificate_validation() {
+    services::SecurityService security(g_mockNvs);
+    services::ProvisioningService provService(security, g_mockNvs, nullptr);
+
+    // Reject wrong expected size
+    TEST_ASSERT_FALSE(provService.installModemCertificate("hivemq-ca.pem", 100, "QUJD"));
+
+    // Reject invalid base64
+    TEST_ASSERT_FALSE(provService.installModemCertificate("hivemq-ca.pem", 1939, "not-valid-base64!"));
+}
+
 int main() {
     UNITY_BEGIN();
 
@@ -95,6 +148,8 @@ int main() {
     RUN_TEST(test_security_provision_root_key_prevents_double_provision);
     RUN_TEST(test_security_device_id_store_and_load);
     RUN_TEST(test_provisioning_service_hex_to_bytes);
+    RUN_TEST(test_provisioning_service_base64_decode);
+    RUN_TEST(test_provisioning_service_certificate_validation);
     RUN_TEST(test_ota_key_store);
 
     return UNITY_END();

@@ -313,6 +313,81 @@ bool Sim7600Driver::hasCertificate(const char* certificateFile)
 		std::strstr(response, certificateFile) != nullptr;
 }
 
+bool Sim7600Driver::deleteCertificate(const char* certificateFile)
+{
+	if (certificateFile == nullptr || certificateFile[0] == '\0') return false;
+	if (!_initialized || !_active) return false;
+	char command[64]{};
+	char response[128]{};
+	std::snprintf(command, sizeof(command), "AT+CCERTDELE=\"%s\"", certificateFile);
+	// Per specification: ignore error if the certificate does not exist
+	sendCommand(command, response, sizeof(response), hardware::SIM7600_AT_TIMEOUT_MS);
+	return true;
+}
+
+bool Sim7600Driver::downloadCertificate(const char* certificateFile,
+										const uint8_t* certData,
+										std::size_t certLen)
+{
+	if (certificateFile == nullptr || certificateFile[0] == '\0' ||
+		certData == nullptr || certLen == 0U || certLen > 10240U) {
+		return false;
+	}
+	if (!_initialized || !_active) return false;
+
+	char command[64]{};
+	char promptResponse[64]{};
+	std::snprintf(command, sizeof(command), "AT+CCERTDOWN=\"%s\",%u",
+				  certificateFile, static_cast<unsigned int>(certLen));
+
+	if (!sendCommandUntil(command, ">", promptResponse, sizeof(promptResponse),
+						  hardware::SIM7600_AT_TIMEOUT_LONG_MS)) {
+		return false;
+	}
+
+	std::size_t totalWritten = 0U;
+	while (totalWritten < certLen) {
+		std::size_t chunk = certLen - totalWritten;
+		if (chunk > 256U) chunk = 256U;
+		std::size_t n = _uartHal.write(certData + totalWritten, chunk);
+		if (n == 0U) {
+			_delayHal.waitMs(2U);
+			n = _uartHal.write(certData + totalWritten, chunk);
+			if (n == 0U) return false;
+		}
+		totalWritten += n;
+	}
+
+	// Wait for confirmation: \nOK, \r\nOK (timeout up to 15s)
+	char resp[256]{};
+	std::size_t respLen = 0U;
+	const uint32_t startMs = utils::Timer::millis();
+	bool confirmed = false;
+	while (utils::Timer::millis() - startMs < 15000U && respLen + 1U < sizeof(resp)) {
+		uint8_t byte = 0U;
+		if (_uartHal.read(&byte, 1U, 1U) == 0U) {
+			_delayHal.waitMs(2U);
+			continue;
+		}
+		resp[respLen++] = static_cast<char>(byte);
+		resp[respLen] = '\0';
+		if (std::strstr(resp, "\nOK") != nullptr ||
+			std::strstr(resp, "\r\nOK") != nullptr) {
+			confirmed = true;
+			break;
+		}
+		if (std::strstr(resp, "\r\nERROR") != nullptr ||
+			std::strstr(resp, "\nERROR") != nullptr) {
+			return false;
+		}
+	}
+
+	if (!confirmed) return false;
+
+	// Verify certificate is present in AT+CCERTLIST
+	return hasCertificate(certificateFile);
+}
+
 bool Sim7600Driver::sendDiagnosticCommand(const char* command, char* response,
 											 std::size_t responseSize, uint32_t timeoutMs)
 {

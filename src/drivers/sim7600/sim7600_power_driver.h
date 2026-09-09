@@ -21,6 +21,8 @@ public:
 
     /// Demande l'allumage par une unique impulsion K/PWRKEY active bas.
     bool powerOn();
+    void setPowerOnIssued(bool issued = true);
+    bool isPowerOnIssued() const;
 
 private:
 	hal::GpioHal& _gpioHal;
