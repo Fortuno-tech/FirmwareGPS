@@ -1,17 +1,13 @@
 #ifndef SIM7600_SERVICE_H
 #define SIM7600_SERVICE_H
 
-#include <Arduino.h>
-
-#include "sim7600_driver.h"
+#include "../../drivers/sim7600/sim7600_driver.h"
 
 class SIM7600Service
 {
 public:
 
-    SIM7600Service(
-        SIM7600Driver& driver
-    );
+    SIM7600Service();
 
     bool begin();
 
@@ -21,17 +17,19 @@ public:
 
     bool connectInternet();
 
-    bool getIPAddress(
-        String& ipAddress
-    );
+    bool isInternetReady();
 
-    bool isReady() const;
+    String getIPAddress();
+
+    SIM7600Driver& getDriver();
 
 private:
 
-    SIM7600Driver& _driver;
+    SIM7600Driver _driver;
 
-    bool _ready;
+    bool _internetReady;
+
+    String _ipAddress;
 };
 
 #endif

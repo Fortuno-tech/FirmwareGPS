@@ -28,11 +28,20 @@
 
 #define SIM7600_NETWORK_TIMEOUT_MS 3000
 
-#define SIM7600_MAX_AT_ATTEMPTS   5
-
-#define SIM7600_APN ""
-
+#define SIM7600_AT_ATTEMPTS                 5
+#define SIM7600_APN                         "internet"
+#define SIM7600_PDP_TYPE                    "IP"
+#define SIM7600_DEFAULT_IP                   "0.0.0.0"
+#define SIM7600_PING_IP                      "8.8.8.8"
+#define SIM7600_PING_TIMEOUT_MS               10000
 #define SIM7600_NETWORK_CHECK_INTERVAL_MS 5000
-#define SIM7600_NETWORK_SEARCH_TIMEOUT_MS 60000
+#define SIM7600_NETWORK_SEARCH_TIMEOUT_MS 180000
 #define SIM7600_PDP_CONTEXT 1
+
+
+#define SIM7600_GPS_ENABLE              true
+#define GPS_UPDATE_INTERVAL_MS          5000
+#define GPS_FIX_CHECK_INTERVAL_MS       2000
+#define GPS_START_TIMEOUT_MS            120000
+#define GPS_INFO_TIMEOUT_MS             5000
 #endif

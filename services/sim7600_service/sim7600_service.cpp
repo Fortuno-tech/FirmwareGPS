@@ -1,18 +1,17 @@
 #include "sim7600_service.h"
 
-#include "hardware_config.h"
+#include "../../include/config/hardware_config.h"
 
 
 // =====================================================
 // CONSTRUCTEUR
 // =====================================================
 
-SIM7600Service::SIM7600Service(
-    SIM7600Driver& driver
-)
-    : _driver(driver)
+SIM7600Service::SIM7600Service()
 {
-    _ready = false;
+    _internetReady = false;
+
+    _ipAddress = "";
 }
 
 
@@ -23,153 +22,100 @@ SIM7600Service::SIM7600Service(
 bool SIM7600Service::begin()
 {
     Serial.println();
-    Serial.println(
-        "================================="
-    );
-
-    Serial.println(
-        "     SIM7600 SERVICE"
-    );
-
-    Serial.println(
-        "================================="
-    );
-
+    Serial.println("=================================");
+    Serial.println("       SIM7600 SERVICE");
+    Serial.println("=================================");
 
     if (!_driver.begin())
     {
         Serial.println(
-            "[SERVICE] Driver FAILED"
+            "[SIM7600 SERVICE] INIT FAILED"
         );
 
         return false;
     }
 
-
-    _ready = true;
-
-
     Serial.println(
-        "[SERVICE] Driver SIM7600 READY"
+        "[SIM7600 SERVICE] INIT OK"
     );
-
 
     return true;
 }
 
 
 // =====================================================
-// DIAGNOSTIC
+// DIAGNOSTICS
 // =====================================================
 
 bool SIM7600Service::runDiagnostics()
 {
-    if (!_ready)
-    {
-        return false;
-    }
+    Serial.println();
+    Serial.println("=================================");
+    Serial.println("       SIM7600 DIAGNOSTICS");
+    Serial.println("=================================");
 
+    bool modem = _driver.getModemInformation();
 
-    String modemInfo;
+    bool sim = _driver.testSIM();
 
-    bool modemOK =
-        _driver.getModemInformation(
-            modemInfo
-        );
+    bool signal = _driver.testSignal();
 
+    bool network = _driver.testNetwork();
 
-    bool simOK =
-        _driver.testSIM();
+    bool operatorOK = _driver.testOperator();
 
+    bool cpsi = _driver.testCPSI();
 
-    bool signalOK =
-        _driver.testSignal();
-
-
-    bool networkOK =
-        _driver.testNetwork();
-
-
-    bool operatorOK =
-        _driver.testOperator();
-
-
-    bool cpsiOK =
-        _driver.testCPSI();
-
-
-    bool dataOK =
-        _driver.testPacketAttach();
-
+    bool attach = _driver.testPacketAttach();
 
     Serial.println();
     Serial.println(
-        "================================="
+        "---------- RESULTATS ----------"
     );
 
+    Serial.print("MODEM    : ");
     Serial.println(
-        "       RESULTAT DIAGNOSTIC"
+        modem ? "OK" : "FAILED"
     );
 
+    Serial.print("SIM      : ");
     Serial.println(
-        "================================="
+        sim ? "OK" : "FAILED"
     );
 
-
-    Serial.print("MODEM     : ");
+    Serial.print("SIGNAL   : ");
     Serial.println(
-        modemOK ? "OK" : "FAILED"
+        signal ? "OK" : "FAILED"
     );
 
-
-    Serial.print("SIM       : ");
+    Serial.print("RESEAU   : ");
     Serial.println(
-        simOK ? "OK" : "FAILED"
+        network ? "OK" : "FAILED"
     );
 
-
-    Serial.print("SIGNAL    : ");
-    Serial.println(
-        signalOK ? "OK" : "FAILED"
-    );
-
-
-    Serial.print("RESEAU    : ");
-    Serial.println(
-        networkOK ? "OK" : "FAILED"
-    );
-
-
-    Serial.print("OPERATEUR : ");
+    Serial.print("OPERATEUR: ");
     Serial.println(
         operatorOK ? "OK" : "FAILED"
     );
 
-
-    Serial.print("CPSI      : ");
+    Serial.print("CPSI     : ");
     Serial.println(
-        cpsiOK ? "OK" : "FAILED"
+        cpsi ? "OK" : "FAILED"
     );
 
-
-    Serial.print("DATA      : ");
+    Serial.print("CGATT    : ");
     Serial.println(
-        dataOK ? "ATTACHE" : "NON ATTACHE"
+        attach ? "OK" : "FAILED"
     );
-
-
-    Serial.println(
-        "================================="
-    );
-
 
     return (
-        modemOK &&
-        simOK &&
-        signalOK &&
-        networkOK &&
-        cpsiOK &&
-        dataOK
+        modem &&
+        sim &&
+        signal &&
+        network &&
+        operatorOK &&
+        cpsi &&
+        attach
     );
 }
 
@@ -180,9 +126,7 @@ bool SIM7600Service::runDiagnostics()
 
 bool SIM7600Service::waitForNetwork()
 {
-    return _driver.waitForNetwork(
-        SIM7600_NETWORK_SEARCH_TIMEOUT_MS
-    );
+    return _driver.waitForNetwork();
 }
 
 
@@ -193,108 +137,118 @@ bool SIM7600Service::waitForNetwork()
 bool SIM7600Service::connectInternet()
 {
     Serial.println();
-    Serial.println(
-        "================================="
-    );
-
-    Serial.println(
-        "     CONNEXION INTERNET"
-    );
-
-    Serial.println(
-        "================================="
-    );
-
+    Serial.println("=================================");
+    Serial.println("       CONNEXION INTERNET");
+    Serial.println("=================================");
 
     // -------------------------------------------------
     // APN
     // -------------------------------------------------
 
-    String apn =
-        SIM7600_APN;
-
-
-    if (apn.length() == 0)
+    if (
+        String(SIM7600_APN).length() == 0
+    )
     {
-        Serial.println();
         Serial.println(
             "[INTERNET] APN NON CONFIGURE"
         );
 
+        return false;
+    }
+
+    if (
+        !_driver.configureAPN(
+            SIM7600_APN
+        )
+    )
+    {
         Serial.println(
-            "[INTERNET] Modifier SIM7600_APN"
+            "[INTERNET] APN FAILED"
         );
 
         return false;
     }
 
-
     // -------------------------------------------------
-    // Configuration APN
-    // -------------------------------------------------
-
-    if (
-        !_driver.configureAPN(
-            apn
-        )
-    )
-    {
-        return false;
-    }
-
-
-    // -------------------------------------------------
-    // Activation DATA
+    // DATA
     // -------------------------------------------------
 
     if (
         !_driver.activateData()
     )
     {
+        Serial.println(
+            "[INTERNET] DATA ACTIVATION FAILED"
+        );
+
         return false;
     }
 
+    delay(3000);
 
     // -------------------------------------------------
     // IP
     // -------------------------------------------------
 
-    String ipAddress;
-
-
     if (
         !_driver.getIPAddress(
-            ipAddress
+            _ipAddress
         )
     )
     {
+        Serial.println(
+            "[INTERNET] IP FAILED"
+        );
+
         return false;
     }
 
+    if (
+        _ipAddress == "0.0.0.0" ||
+        _ipAddress.length() == 0
+    )
+    {
+        Serial.println(
+            "[INTERNET] IP NON VALIDE"
+        );
+
+        return false;
+    }
+
+    _internetReady = true;
 
     Serial.println();
-    Serial.println(
-        "*********************************"
-    );
+    Serial.println("=================================");
+    Serial.println("       INTERNET READY");
+    Serial.println("=================================");
+
+    Serial.print("APN : ");
 
     Serial.println(
-        "   INTERNET CONNECTE"
+        SIM7600_APN
     );
 
-    Serial.print(
-        "   IP : "
+    Serial.print("IP  : ");
+
+    Serial.println(
+        _ipAddress
     );
 
     Serial.println(
-        ipAddress
+        "DATA: CONNECTED"
     );
-
-    Serial.println(
-        "*********************************"
-    );
-
 
     return true;
+}
+
+
+// =====================================================
+// INTERNET READY
+// =====================================================
+
+bool SIM7600Service::isInternetReady()
+{
+    return _internetReady;
 }
 
 
@@ -302,21 +256,17 @@ bool SIM7600Service::connectInternet()
 // GET IP
 // =====================================================
 
-bool SIM7600Service::getIPAddress(
-    String& ipAddress
-)
+String SIM7600Service::getIPAddress()
 {
-    return _driver.getIPAddress(
-        ipAddress
-    );
+    return _ipAddress;
 }
 
 
 // =====================================================
-// READY
+// GET DRIVER
 // =====================================================
 
-bool SIM7600Service::isReady() const
+SIM7600Driver& SIM7600Service::getDriver()
 {
-    return _ready;
+    return _driver;
 }

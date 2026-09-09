@@ -1,10 +1,7 @@
 #include "sim7600_driver.h"
 
-#include <Arduino.h>
-
-#include "pin_config.h"
-#include "hardware_config.h"
-#include "uart_hal.h"
+#include "../../include/config/hardware_config.h"
+#include "../../include/config/pin_config.h"
 
 
 // ============================================================
@@ -29,90 +26,113 @@ bool SIM7600Driver::begin()
 {
     Serial.println();
     Serial.println("=================================");
-    Serial.println("     SIM7600 DRIVER");
+    Serial.println("       SIM7600 DRIVER");
     Serial.println("=================================");
 
-    // Création UART2
-    _serial = new HardwareSerial(
-        SIM7600_UART_NUMBER
-    );
+    if (_serial == nullptr)
+    {
+        _serial = new HardwareSerial(
+            SIM7600_UART_NUMBER
+        );
+    }
 
-    // Initialisation UART
-    UARTHAL::begin(
-        *_serial,
+    _serial->begin(
         SIM7600_BAUDRATE,
+        SERIAL_8N1,
         SIM7600_RX_PIN,
         SIM7600_TX_PIN
     );
 
-    Serial.println(
-        "UART SIM7600 initialise."
-    );
+    Serial.println("[SIM7600] UART initialise");
 
-    // --------------------------------------------------------
-    // IMPORTANT :
-    // Le SIM7600 peut encore être en train de démarrer.
-    // --------------------------------------------------------
-
-    Serial.println(
-        "Attente demarrage modem..."
-    );
-
-    delay(3000);
-
-    // --------------------------------------------------------
-    // Test AT plusieurs fois
-    // --------------------------------------------------------
+    delay(1000);
 
     for (
         int attempt = 1;
-        attempt <= SIM7600_MAX_AT_ATTEMPTS;
+        attempt <= SIM7600_AT_ATTEMPTS;
         attempt++
     )
     {
-        Serial.print(
-            "Test AT "
-        );
-
+        Serial.print("[SIM7600] Test AT ");
         Serial.print(attempt);
-
-        Serial.print(
-            "/"
-        );
-
-        Serial.print(
-            SIM7600_MAX_AT_ATTEMPTS
-        );
-
-        Serial.println(
-            "..."
-        );
+        Serial.print("/");
+        Serial.println(SIM7600_AT_ATTEMPTS);
 
         if (testAT())
         {
-            Serial.println(
-                "[SIM7600] AT : OK"
-            );
-
             _ready = true;
-
+            Serial.println("[SIM7600] MODEM READY");
             return true;
         }
 
-        Serial.println(
-            "[SIM7600] Pas encore pret."
-        );
-
-        delay(2000);
+        delay(1000);
     }
 
-    Serial.println(
-        "[SIM7600] AT : FAILED"
-    );
-
     _ready = false;
+    Serial.println("[SIM7600] MODEM NOT READY");
 
     return false;
+}
+
+
+// ============================================================
+// SEND COMMAND
+// ============================================================
+
+String SIM7600Driver::sendCommand(
+    const String& command,
+    uint32_t timeout
+)
+{
+    if (_serial == nullptr)
+    {
+        return "";
+    }
+
+    while (_serial->available())
+    {
+        _serial->read();
+    }
+
+    Serial.print("[SIM7600 TX] ");
+    Serial.println(command);
+
+    _serial->println(command);
+
+    String response = "";
+    uint32_t startTime = millis();
+    bool finished = false;
+
+    while (millis() - startTime < timeout)
+    {
+        while (_serial->available())
+        {
+            char c = _serial->read();
+            response += c;
+
+            if (
+                response.indexOf("\r\nOK\r\n") >= 0 ||
+                response.indexOf("\nOK\n") >= 0 ||
+                response.indexOf("\r\nERROR\r\n") >= 0 ||
+                response.indexOf("\nERROR\n") >= 0
+            )
+            {
+                finished = true;
+            }
+        }
+
+        if (finished)
+        {
+            break;
+        }
+
+        delay(10);
+    }
+
+    Serial.println("[SIM7600 RX]");
+    Serial.println(response);
+
+    return response;
 }
 
 
@@ -132,36 +152,17 @@ bool SIM7600Driver::testAT()
 
 
 // ============================================================
-// INFORMATIONS MODEM
+// MODEM INFORMATION
 // ============================================================
 
-bool SIM7600Driver::getModemInformation(
-    String& information
-)
+bool SIM7600Driver::getModemInformation()
 {
-    information = sendCommand(
+    String response = sendCommand(
         "ATI",
         SIM7600_INFO_TIMEOUT_MS
     );
 
-    if (information.indexOf("SIMCOM") >= 0)
-    {
-        Serial.println(
-            "[SIM7600] MODEM : OK"
-        );
-
-        Serial.println(
-            information
-        );
-
-        return true;
-    }
-
-    Serial.println(
-        "[SIM7600] MODEM : FAILED"
-    );
-
-    return false;
+    return response.indexOf("OK") >= 0;
 }
 
 
@@ -173,31 +174,11 @@ bool SIM7600Driver::testSIM()
 {
     String response = sendCommand(
         "AT+CPIN?",
-        SIM7600_AT_TIMEOUT_MS
+        SIM7600_INFO_TIMEOUT_MS
     );
 
-    Serial.println(
-        response
-    );
-
-    if (
-        response.indexOf(
-            "+CPIN: READY"
-        ) >= 0
-    )
-    {
-        Serial.println(
-            "[SIM7600] SIM : READY"
-        );
-
-        return true;
-    }
-
-    Serial.println(
-        "[SIM7600] SIM : FAILED"
-    );
-
-    return false;
+    return response.indexOf("+CPIN: READY") >= 0 ||
+           response.indexOf("OK") >= 0;
 }
 
 
@@ -209,114 +190,32 @@ bool SIM7600Driver::testSignal()
 {
     String response = sendCommand(
         "AT+CSQ",
-        SIM7600_AT_TIMEOUT_MS
+        SIM7600_INFO_TIMEOUT_MS
     );
 
-    Serial.println(
-        response
-    );
-
-    int index = response.indexOf(
-        "+CSQ:"
-    );
-
-    if (index < 0)
-    {
-        Serial.println(
-            "[SIM7600] SIGNAL : INCONNU"
-        );
-
-        return false;
-    }
-
-    int comma = response.indexOf(
-        ',',
-        index
-    );
-
-    if (comma < 0)
-    {
-        return false;
-    }
-
-    String rssiString = response.substring(
-        index + 5,
-        comma
-    );
-
-    rssiString.trim();
-
-    int rssi = rssiString.toInt();
-
-    Serial.print(
-        "[SIM7600] RSSI = "
-    );
-
-    Serial.println(
-        rssi
-    );
-
-    // 99 = signal inconnu
-    if (rssi == 99)
-    {
-        Serial.println(
-            "[SIM7600] SIGNAL : INDISPONIBLE"
-        );
-
-        return false;
-    }
-
-    if (rssi >= 0 && rssi <= 31)
-    {
-        Serial.println(
-            "[SIM7600] SIGNAL : DISPONIBLE"
-        );
-
-        return true;
-    }
-
-    return false;
+    return response.indexOf("+CSQ:") >= 0;
 }
 
 
 // ============================================================
-// TEST RESEAU
+// TEST NETWORK
 // ============================================================
 
 bool SIM7600Driver::testNetwork()
 {
     String response = sendCommand(
         "AT+CREG?",
-        SIM7600_NETWORK_TIMEOUT_MS
+        SIM7600_INFO_TIMEOUT_MS
     );
 
-    Serial.println(
-        response
-    );
-
-    if (
-        isNetworkRegistered(
-            response
-        )
-    )
-    {
-        Serial.println(
-            "[SIM7600] RESEAU : ENREGISTRE"
-        );
-
-        return true;
-    }
-
-    Serial.println(
-        "[SIM7600] RESEAU : NON ENREGISTRE"
-    );
-
-    return false;
+    return response.indexOf("+CREG: 0,1") >= 0 ||
+           response.indexOf("+CREG: 1") >= 0 ||
+           response.indexOf("+CREG: 0,5") >= 0;
 }
 
 
 // ============================================================
-// TEST OPERATEUR
+// TEST OPERATOR
 // ============================================================
 
 bool SIM7600Driver::testOperator()
@@ -326,28 +225,7 @@ bool SIM7600Driver::testOperator()
         SIM7600_INFO_TIMEOUT_MS
     );
 
-    Serial.println(
-        response
-    );
-
-    if (
-        response.indexOf(
-            "+COPS:"
-        ) >= 0
-    )
-    {
-        Serial.println(
-            "[SIM7600] OPERATEUR : OK"
-        );
-
-        return true;
-    }
-
-    Serial.println(
-        "[SIM7600] OPERATEUR : FAILED"
-    );
-
-    return false;
+    return response.indexOf("+COPS:") >= 0;
 }
 
 
@@ -362,456 +240,172 @@ bool SIM7600Driver::testCPSI()
         SIM7600_INFO_TIMEOUT_MS
     );
 
-    Serial.println(
-        response
-    );
-
-    if (
-        response.indexOf(
-            "NO SERVICE"
-        ) >= 0
-    )
-    {
-        Serial.println(
-            "[SIM7600] CPSI : NO SERVICE"
-        );
-
-        return false;
-    }
-
-    if (
-        response.indexOf(
-            "+CPSI:"
-        ) >= 0
-    )
-    {
-        Serial.println(
-            "[SIM7600] CPSI : OK"
-        );
-
-        return true;
-    }
-
-    Serial.println(
-        "[SIM7600] CPSI : FAILED"
-    );
-
-    return false;
+    return response.indexOf("+CPSI:") >= 0;
 }
 
 
 // ============================================================
-// TEST ATTACH DATA
+// TEST PACKET ATTACH
 // ============================================================
 
 bool SIM7600Driver::testPacketAttach()
 {
     String response = sendCommand(
         "AT+CGATT?",
-        SIM7600_AT_TIMEOUT_MS
+        SIM7600_INFO_TIMEOUT_MS
     );
 
-    Serial.println(
-        response
-    );
-
-    if (
-        response.indexOf(
-            "+CGATT: 1"
-        ) >= 0
-    )
-    {
-        Serial.println(
-            "[SIM7600] DATA : ATTACHE"
-        );
-
-        return true;
-    }
-
-    Serial.println(
-        "[SIM7600] DATA : NON ATTACHE"
-    );
-
-    return false;
+    return response.indexOf("+CGATT: 1") >= 0;
 }
 
 
 // ============================================================
-// ATTENTE RESEAU
+// WAIT FOR NETWORK
 // ============================================================
 
-bool SIM7600Driver::waitForNetwork(
-    uint32_t timeoutMs
-)
+bool SIM7600Driver::waitForNetwork()
 {
-    Serial.println();
-    Serial.println(
-        "================================="
-    );
-
-    Serial.println(
-        "     RECHERCHE RESEAU"
-    );
-
-    Serial.println(
-        "================================="
-    );
-
-    uint32_t startTime = millis();
-
-    while (
-        millis() - startTime < timeoutMs
-    )
+    for (int i = 0; i < 10; i++)
     {
-        Serial.println();
-        Serial.println(
-            "[RESEAU] Verification..."
-        );
-
-        // ----------------------------------------------------
-        // CREG
-        // ----------------------------------------------------
-
-        String creg = sendCommand(
+        String response = sendCommand(
             "AT+CREG?",
-            3000
-        );
-
-        Serial.print(
-            "[CREG] "
-        );
-
-        Serial.println(
-            creg
+            SIM7600_NETWORK_TIMEOUT_MS
         );
 
         if (
-            isNetworkRegistered(
-                creg
-            )
+            response.indexOf("+CREG: 0,1") >= 0 ||
+            response.indexOf("+CREG: 0,5") >= 0 ||
+            response.indexOf("+CREG: 1") >= 0
         )
         {
-            Serial.println(
-                "[RESEAU] ENREGISTRE !"
-            );
-
-            // ------------------------------------------------
-            // CPSI
-            // ------------------------------------------------
-
-            String cpsi = sendCommand(
-                "AT+CPSI?",
-                5000
-            );
-
-            Serial.print(
-                "[CPSI] "
-            );
-
-            Serial.println(
-                cpsi
-            );
-
-            if (
-                isServiceAvailable(
-                    cpsi
-                )
-            )
-            {
-                Serial.println();
-                Serial.println(
-                    "================================="
-                );
-
-                Serial.println(
-                    "     RESEAU DISPONIBLE"
-                );
-
-                Serial.println(
-                    "================================="
-                );
-
-                return true;
-            }
-        }
-        else
-        {
-            // ------------------------------------------------
-            // CSQ pendant recherche
-            // ------------------------------------------------
-
-            String csq = sendCommand(
-                "AT+CSQ",
-                3000
-            );
-
-            Serial.print(
-                "[CSQ] "
-            );
-
-            Serial.println(
-                csq
-            );
-
-            Serial.println(
-                "[RESEAU] Toujours en recherche..."
-            );
+            Serial.println("[SIM7600] RESEAU ENREGISTRE");
+            return true;
         }
 
-        delay(
-            SIM7600_NETWORK_CHECK_INTERVAL_MS
-        );
+        delay(2000);
     }
-
-    Serial.println();
-    Serial.println(
-        "[RESEAU] TIMEOUT"
-    );
 
     return false;
 }
 
 
 // ============================================================
-// CONFIGURATION APN
+// CONFIGURE APN
 // ============================================================
 
 bool SIM7600Driver::configureAPN(
     const String& apn
 )
 {
-    if (apn.length() == 0)
-    {
-        Serial.println(
-            "[SIM7600] APN VIDE"
-        );
-
-        return false;
-    }
-
-    String command =
-        "AT+CGDCONT=";
-
-    command += String(
-        SIM7600_PDP_CONTEXT
-    );
-
-    command +=
-        ",\"IP\",\"";
-
-    command += apn;
-
-    command += "\"";
+    String command = "AT+CGDCONT=1,\"IP\",\"" + apn + "\"";
 
     String response = sendCommand(
         command,
-        5000
+        SIM7600_INFO_TIMEOUT_MS
     );
 
-    Serial.println(
-        response
-    );
-
-    if (
-        response.indexOf(
-            "OK"
-        ) >= 0
-    )
+    if (response.indexOf("OK") >= 0)
     {
-        Serial.println(
-            "[SIM7600] APN : OK"
-        );
-
+        Serial.print("[INTERNET] APN : ");
+        Serial.println(apn);
         return true;
     }
 
-    Serial.println(
-        "[SIM7600] APN : FAILED"
-    );
-
+    Serial.println("[INTERNET] APN FAILED");
     return false;
 }
 
 
 // ============================================================
-// ACTIVATION DATA
+// ACTIVATE DATA
 // ============================================================
 
 bool SIM7600Driver::activateData()
 {
-    Serial.println();
-    Serial.println(
-        "Activation connexion DATA..."
-    );
-
-    // --------------------------------------------------------
-    // Vérifier CGATT
-    // --------------------------------------------------------
-
-    String attach = sendCommand(
+    String attachResponse = sendCommand(
         "AT+CGATT?",
-        5000
+        SIM7600_INFO_TIMEOUT_MS
     );
 
-    Serial.println(
-        attach
-    );
-
-    if (
-        attach.indexOf(
-            "+CGATT: 1"
-        ) < 0
-    )
+    if (attachResponse.indexOf("+CGATT: 1") < 0)
     {
-        Serial.println(
-            "Packet attach necessaire..."
-        );
-
-        String response = sendCommand(
+        String setAttach = sendCommand(
             "AT+CGATT=1",
-            30000
+            15000
         );
 
-        Serial.println(
-            response
-        );
-
-        if (
-            response.indexOf(
-                "OK"
-            ) < 0
-        )
+        if (setAttach.indexOf("OK") < 0)
         {
-            Serial.println(
-                "[SIM7600] CGATT FAILED"
-            );
-
             return false;
         }
     }
 
-    // --------------------------------------------------------
-    // Activation PDP
-    // --------------------------------------------------------
-
-    Serial.println(
-        "Activation PDP context..."
-    );
-
-    String response = sendCommand(
+    String activate = sendCommand(
         "AT+CGACT=1,1",
-        30000
+        15000
     );
 
-    Serial.println(
-        response
-    );
-
-    if (
-        response.indexOf(
-            "OK"
-        ) >= 0
-    )
+    if (activate.indexOf("OK") < 0)
     {
-        _dataConnected = true;
-
-        Serial.println(
-            "[SIM7600] DATA : CONNECTEE"
-        );
-
-        return true;
+        return false;
     }
 
-    _dataConnected = false;
+    _dataConnected = true;
 
-    Serial.println(
-        "[SIM7600] DATA : FAILED"
-    );
-
-    return false;
+    Serial.println("[INTERNET] DATA INTERNET READY");
+    return true;
 }
 
 
 // ============================================================
-// GET IP
+// GET IP ADDRESS
 // ============================================================
 
 bool SIM7600Driver::getIPAddress(
     String& ipAddress
 )
 {
-    ipAddress = "";
-
     String response = sendCommand(
         "AT+CGPADDR=1",
-        5000
+        SIM7600_INFO_TIMEOUT_MS
     );
 
-    Serial.println(
-        response
-    );
+    int pos = response.indexOf("+CGPADDR:");
 
-    int index = response.indexOf(
-        "+CGPADDR:"
-    );
-
-    if (index < 0)
+    if (pos < 0)
     {
-        Serial.println(
-            "[SIM7600] IP : ABSENTE"
-        );
-
+        ipAddress = "";
         return false;
     }
 
-    int comma = response.indexOf(
-        ',',
-        index
-    );
+    int comma = response.indexOf(',', pos);
 
     if (comma < 0)
     {
+        ipAddress = "";
         return false;
     }
 
-    int end = response.indexOf(
-        '\r',
-        comma
-    );
+    int start = comma + 1;
+    while (start < response.length() && response[start] == ' ')
+    {
+        start++;
+    }
 
+    int end = response.indexOf('\r', start);
+    if (end < 0)
+    {
+        end = response.indexOf('\n', start);
+    }
     if (end < 0)
     {
         end = response.length();
     }
 
-    ipAddress = response.substring(
-        comma + 1,
-        end
-    );
-
+    ipAddress = response.substring(start, end);
     ipAddress.trim();
 
-    if (
-        ipAddress.length() == 0 ||
-        ipAddress == "0.0.0.0"
-    )
-    {
-        Serial.println(
-            "[SIM7600] IP INVALIDE"
-        );
-
-        return false;
-    }
-
-    Serial.print(
-        "[SIM7600] IP = "
-    );
-
-    Serial.println(
-        ipAddress
-    );
-
-    return true;
+    return ipAddress.length() > 0;
 }
 
 
@@ -821,211 +415,163 @@ bool SIM7600Driver::getIPAddress(
 
 bool SIM7600Driver::testInternet()
 {
-    String ip;
-
-    if (
-        !getIPAddress(ip)
-    )
-    {
-        Serial.println(
-            "[SIM7600] INTERNET : PAS D'IP"
-        );
-
-        return false;
-    }
-
-    Serial.println(
-        "[SIM7600] INTERNET : IP OBTENUE"
+    String response = sendCommand(
+        "AT+CPING=\"8.8.8.8\",1,4,64,10000,10000,255",
+        15000
     );
 
-    return true;
+    return response.indexOf("OK") >= 0 ||
+           response.indexOf("+CPING:") >= 0;
 }
 
 
 // ============================================================
-// ETAT DATA
+// INTERNET CONNECTED
 // ============================================================
 
-bool SIM7600Driver::isDataConnected() const
+bool SIM7600Driver::isInternetConnected()
 {
     return _dataConnected;
 }
 
 
 // ============================================================
-// ETAT MODEM
+// GPS ENABLE
 // ============================================================
 
-bool SIM7600Driver::isReady() const
+bool SIM7600Driver::gpsEnable()
 {
-    return _ready;
+    Serial.println("[GPS] Activation GPS...");
+
+    /*
+     * On regarde d'abord si le GPS est déjà actif.
+     *
+     * Cela évite d'envoyer inutilement :
+     *
+     * AT+CGPS=1
+     *
+     * plusieurs fois.
+     */
+
+    String status = sendCommand(
+        "AT+CGPS?",
+        5000
+    );
+
+    if (status.indexOf("+CGPS: 1") >= 0)
+    {
+        Serial.println("[GPS] GPS deja actif");
+        return true;
+    }
+
+
+    // --------------------------------------------------------
+    // GPS actuellement OFF
+    // --------------------------------------------------------
+
+    String response = sendCommand(
+        "AT+CGPS=1",
+        10000
+    );
+
+    if (response.indexOf("OK") < 0)
+    {
+        Serial.println("[GPS] ECHEC ACTIVATION");
+        return false;
+    }
+
+    Serial.println("[GPS] GPS ACTIVE");
+
+    return true;
 }
 
 
 // ============================================================
-// SEND COMMAND
+// GPS DISABLE
 // ============================================================
 
-String SIM7600Driver::sendCommand(
-    const String& command,
-    uint32_t timeout
-)
+bool SIM7600Driver::gpsDisable()
 {
-    if (
-        _serial == nullptr
-    )
+    Serial.println("[GPS] Desactivation GPS...");
+
+    String response = sendCommand(
+        "AT+CGPS=0",
+        5000
+    );
+
+    if (response.indexOf("OK") < 0)
     {
-        return "";
+        Serial.println("[GPS] ECHEC DESACTIVATION");
+        return false;
     }
 
-    // Nettoyage buffer
-    UARTHAL::flushInput(
-        *_serial
-    );
+    Serial.println("[GPS] GPS OFF");
 
-    Serial.print(
-        "[SIM7600 TX] "
-    );
-
-    Serial.println(
-        command
-    );
-
-    // Envoi commande
-    _serial->print(
-        command
-    );
-
-    _serial->print(
-        "\r\n"
-    );
-
-    String response = "";
-
-    uint32_t start = millis();
-
-    while (
-        millis() - start < timeout
-    )
-    {
-        while (
-            _serial->available()
-        )
-        {
-            char c =
-                _serial->read();
-
-            response += c;
-
-            // Fin OK
-            if (
-                response.indexOf(
-                    "\r\nOK"
-                ) >= 0
-            )
-            {
-                return response;
-            }
-
-            // Fin ERROR
-            if (
-                response.indexOf(
-                    "\r\nERROR"
-                ) >= 0
-            )
-            {
-                return response;
-            }
-        }
-
-        delay(1);
-    }
-
-    return response;
+    return true;
 }
 
 
 // ============================================================
-// HELPERS
+// GPS STATUS
 // ============================================================
 
-bool SIM7600Driver::isNetworkRegistered(
-    const String& response
-)
+bool SIM7600Driver::gpsGetStatus()
 {
-    // Enregistrement local
-    if (
-        response.indexOf(
-            "+CREG: 0,1"
-        ) >= 0
-    )
+    Serial.println("[GPS] Verification statut...");
+
+    String response = sendCommand(
+        "AT+CGPS?",
+        5000
+    );
+
+    if (response.indexOf("+CGPS: 1") >= 0)
     {
+        Serial.println("[GPS] GPS ON");
         return true;
     }
 
-    if (
-        response.indexOf(
-            "+CREG: 1,1"
-        ) >= 0
-    )
+    if (response.indexOf("+CGPS: 0") >= 0)
     {
-        return true;
+        Serial.println("[GPS] GPS OFF");
+        return false;
     }
 
-    // Roaming
-    if (
-        response.indexOf(
-            "+CREG: 0,5"
-        ) >= 0
-    )
-    {
-        return true;
-    }
-
-    if (
-        response.indexOf(
-            "+CREG: 1,5"
-        ) >= 0
-    )
-    {
-        return true;
-    }
+    Serial.println("[GPS] Statut GPS inconnu");
 
     return false;
 }
 
 
-bool SIM7600Driver::isSignalAvailable(
-    const String& response
-)
+// ============================================================
+// GPS RAW INFO
+// ============================================================
+
+bool SIM7600Driver::gpsGetRawInfo()
 {
-    return (
-        response.indexOf(
-            "+CSQ:"
-        ) >= 0 &&
-        response.indexOf(
-            "+CSQ: 99"
-        ) < 0
+    Serial.println();
+    Serial.println("[GPS] Lecture AT+CGPSINFO...");
+
+    String response = sendCommand(
+        "AT+CGPSINFO",
+        10000
     );
-}
+
+    Serial.println();
+
+    Serial.println("[GPS RAW] REPONSE COMPLETE");
+    Serial.println("-----------------------------");
+
+    Serial.print(response);
+
+    Serial.println("-----------------------------");
 
 
-bool SIM7600Driver::isServiceAvailable(
-    const String& response
-)
-{
-    if (
-        response.indexOf(
-            "NO SERVICE"
-        ) >= 0
-    )
+    if (response.indexOf("+CGPSINFO:") >= 0)
     {
-        return false;
+        return true;
     }
 
-    return (
-        response.indexOf(
-            "+CPSI:"
-        ) >= 0
-    );
+    Serial.println("[GPS] +CGPSINFO ABSENT");
+
+    return false;
 }
