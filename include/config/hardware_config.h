@@ -69,6 +69,12 @@ constexpr uint32_t SIM7600_AT_TIMEOUT_MS = 2000;
 /// Timeout étendu pour les commandes AT longues (ex. attache réseau, contexte PDP)
 constexpr uint32_t SIM7600_AT_TIMEOUT_LONG_MS = 10000;
 
+/// Nombre de tentatives AT au démarrage, pour laisser le modem finir son boot.
+constexpr uint8_t SIM7600_AT_MAX_ATTEMPTS = 5U;
+
+/// Délai entre deux tentatives AT de démarrage.
+constexpr uint32_t SIM7600_AT_RETRY_DELAY_MS = 2000U;
+
 /**
  * @brief Timeout de la commande d'interrogation de position GNSS
  *        (AT+CGPSINFO / AT+CGNSSINFO), plus longue qu'une commande AT

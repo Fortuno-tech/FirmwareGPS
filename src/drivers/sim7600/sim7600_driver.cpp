@@ -15,26 +15,34 @@ namespace fortico {
 namespace drivers {
 
 Sim7600Driver::Sim7600Driver(hal::UartHal& uartHal)
-	: _uartHal(uartHal), _initialized(false), _healthy(false), _active(false)
+	: _uartHal(uartHal), _initialized(false), _healthy(false), _active(false),
+	  _dataConnected(false)
 {
 }
 
 constants::ErrorCode Sim7600Driver::init()
 {
-	if (_initialized) return constants::ErrorCode::OK;
 #ifdef ESP32_TARGET
-	if (!_uartHal.init(1U, hardware::SIM7600_UART_BAUD_RATE,
-					   pins::SIM7600_TX1, pins::SIM7600_RX1)) {
-		return constants::ErrorCode::NETWORK_FAILURE;
+	if (!_initialized) {
+		if (!_uartHal.init(1U, hardware::SIM7600_UART_BAUD_RATE,
+						   pins::SIM7600_TX1, pins::SIM7600_RX1)) {
+			return constants::ErrorCode::NETWORK_FAILURE;
+		}
+		_initialized = true;
 	}
-	_initialized = true;
 	_active = true;
-	if (!testAt(hardware::SIM7600_AT_TIMEOUT_MS)) {
-		_healthy = false;
-		return constants::ErrorCode::MODEM_AT_TIMEOUT;
+	for (uint8_t attempt = 0U;
+		 attempt < hardware::SIM7600_AT_MAX_ATTEMPTS; ++attempt) {
+		if (testAt(hardware::SIM7600_AT_TIMEOUT_MS)) {
+			_healthy = true;
+			return constants::ErrorCode::OK;
+		}
+		if (attempt + 1U < hardware::SIM7600_AT_MAX_ATTEMPTS) {
+			delay(hardware::SIM7600_AT_RETRY_DELAY_MS);
+		}
 	}
-	_healthy = true;
-	return constants::ErrorCode::OK;
+	_healthy = false;
+	return constants::ErrorCode::MODEM_AT_TIMEOUT;
 #else
 	return constants::ErrorCode::NETWORK_FAILURE;
 #endif
@@ -74,6 +82,7 @@ void Sim7600Driver::reset()
 	}
 	_healthy = testAt(hardware::SIM7600_AT_TIMEOUT_MS);
 	_active = true;
+	_dataConnected = false;
 }
 
 bool Sim7600Driver::sendCommand(const char* command, char* response,
@@ -84,6 +93,7 @@ bool Sim7600Driver::sendCommand(const char* command, char* response,
 		return false;
 	}
 
+	drainInput();
 	response[0] = '\0';
 	const std::size_t commandLength = std::strlen(command);
 	if (_uartHal.write(reinterpret_cast<const uint8_t*>(command),
@@ -141,16 +151,71 @@ bool Sim7600Driver::testAt(uint32_t timeoutMs)
 	return sendCommand("AT", response, sizeof(response), timeoutMs);
 }
 
+bool Sim7600Driver::getModemInformation(char* information,
+								 std::size_t informationSize)
+{
+	return sendDiagnosticCommand("ATI", information, informationSize,
+							 hardware::SIM7600_AT_TIMEOUT_LONG_MS) &&
+		std::strstr(information, "SIMCOM") != nullptr;
+}
+
+bool Sim7600Driver::isSimReady()
+{
+	char response[96]{};
+	return sendDiagnosticCommand("AT+CPIN?", response, sizeof(response),
+							 hardware::SIM7600_AT_TIMEOUT_MS) &&
+		std::strstr(response, "+CPIN: READY") != nullptr;
+}
+
+bool Sim7600Driver::hasSignal()
+{
+	char response[96]{};
+	return sendDiagnosticCommand("AT+CSQ", response, sizeof(response),
+							 hardware::SIM7600_AT_TIMEOUT_MS) &&
+		std::strstr(response, "+CSQ:") != nullptr &&
+		std::strstr(response, "+CSQ: 99") == nullptr;
+}
+
+bool Sim7600Driver::isNetworkRegistered()
+{
+	char response[96]{};
+	return sendDiagnosticCommand("AT+CREG?", response, sizeof(response),
+							 hardware::SIM7600_AT_TIMEOUT_MS) &&
+		(std::strstr(response, ",1") != nullptr ||
+		 std::strstr(response, ",5") != nullptr);
+}
+
+bool Sim7600Driver::hasOperator()
+{
+	char response[128]{};
+	return sendDiagnosticCommand("AT+COPS?", response, sizeof(response),
+							 hardware::SIM7600_AT_TIMEOUT_LONG_MS) &&
+		std::strstr(response, "+COPS:") != nullptr;
+}
+
+bool Sim7600Driver::hasRadioService()
+{
+	char response[160]{};
+	return sendDiagnosticCommand("AT+CPSI?", response, sizeof(response),
+							 hardware::SIM7600_AT_TIMEOUT_LONG_MS) &&
+		std::strstr(response, "+CPSI:") != nullptr &&
+		std::strstr(response, "NO SERVICE") == nullptr;
+}
+
+bool Sim7600Driver::isPacketAttached()
+{
+	char response[96]{};
+	return sendDiagnosticCommand("AT+CGATT?", response, sizeof(response),
+							 hardware::SIM7600_AT_TIMEOUT_MS) &&
+		std::strstr(response, "+CGATT: 1") != nullptr;
+}
+
 bool Sim7600Driver::waitForNetwork(uint32_t timeoutMs)
 {
 	if (!_initialized || !_active || timeoutMs == 0U) return false;
-	char response[128]{};
 	const uint32_t startMs = utils::Timer::millis();
 	while (utils::Timer::millis() - startMs < timeoutMs) {
-		if (sendCommand("AT+CREG?", response, sizeof(response),
-			hardware::SIM7600_AT_TIMEOUT_MS) &&
-			(std::strstr(response, ",1") != nullptr ||
-			 std::strstr(response, ",5") != nullptr)) {
+		if (isNetworkRegistered() && hasRadioService()) {
 			return true;
 		}
 #ifdef ESP32_TARGET
@@ -168,8 +233,10 @@ bool Sim7600Driver::configurePdp(const char* apn)
 	char response[128]{};
 	std::snprintf(command, sizeof(command),
 		"AT+CGDCONT=1,\"IP\",\"%s\"", apn);
-	return sendCommand(command, response, sizeof(response),
+	const bool configured = sendCommand(command, response, sizeof(response),
 		hardware::SIM7600_AT_TIMEOUT_LONG_MS);
+	if (configured) _dataConnected = false;
+	return configured;
 }
 
 bool Sim7600Driver::activatePdp(uint32_t timeoutMs)
@@ -179,7 +246,54 @@ bool Sim7600Driver::activatePdp(uint32_t timeoutMs)
 	if (!sendCommand("AT+CGATT=1", response, sizeof(response), timeoutMs)) {
 		return false;
 	}
-	return sendCommand("AT+CGACT=1,1", response, sizeof(response), timeoutMs);
+	_dataConnected = sendCommand("AT+CGACT=1,1", response, sizeof(response),
+								 timeoutMs);
+	return _dataConnected;
+}
+
+bool Sim7600Driver::getIpAddress(char* ipAddress, std::size_t ipAddressSize)
+{
+	if (ipAddress == nullptr || ipAddressSize < 2U) return false;
+	char response[128]{};
+	ipAddress[0] = '\0';
+	if (!sendDiagnosticCommand("AT+CGPADDR=1", response, sizeof(response),
+							hardware::SIM7600_AT_TIMEOUT_LONG_MS)) {
+		return false;
+	}
+	const char* prefix = std::strstr(response, "+CGPADDR:");
+	if (prefix == nullptr) return false;
+	const char* comma = std::strchr(prefix, ',');
+	if (comma == nullptr) return false;
+	++comma;
+	while (*comma == ' ' || *comma == '\"') ++comma;
+	std::size_t length = 0U;
+	while (comma[length] != '\0' && comma[length] != '\r' &&
+		   comma[length] != '\n' && comma[length] != '\"' &&
+		   length + 1U < ipAddressSize) {
+		ipAddress[length] = comma[length];
+		++length;
+	}
+	ipAddress[length] = '\0';
+	return length > 0U && std::strcmp(ipAddress, "0.0.0.0") != 0;
+}
+
+bool Sim7600Driver::isDataConnected() const
+{
+	return _initialized && _active && _dataConnected;
+}
+
+bool Sim7600Driver::sendDiagnosticCommand(const char* command, char* response,
+											 std::size_t responseSize, uint32_t timeoutMs)
+{
+	return sendCommand(command, response, responseSize, timeoutMs);
+}
+
+void Sim7600Driver::drainInput()
+{
+	uint8_t discarded = 0U;
+	while (_uartHal.available() > 0) {
+		if (_uartHal.read(&discarded, 1U, 0U) == 0U) break;
+	}
 }
 
 }  // namespace drivers

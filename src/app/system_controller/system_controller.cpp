@@ -8,7 +8,7 @@ namespace app {
 SystemController::SystemController(
 	core::EventBus& eventBus, managers::AlertManager& alertManager,
 	services::AuthenticationService& authenticationService,
-	services::RfidService& rfidService, drivers::Sim7600Driver& sim7600,
+	services::RfidService& rfidService, services::Sim7600Service& sim7600Service,
 	services::DiagnosticsService& diagnosticsService,
 	core::PowerMonitor& powerMonitor, core::ErrorHandler& errorHandler,
 	services::SecurityService& securityService,
@@ -21,7 +21,7 @@ SystemController::SystemController(
 	middleware::CellularMqttClient& mqttClient)
 	: _eventBus(eventBus), _alertManager(alertManager),
 	  _authenticationService(authenticationService), _rfidService(rfidService),
-	  _sim7600(sim7600), _diagnosticsService(diagnosticsService),
+	  _sim7600Service(sim7600Service), _diagnosticsService(diagnosticsService),
 	  _powerMonitor(powerMonitor), _errorHandler(errorHandler),
 	  _securityService(securityService), _storageService(storageService),
 	  _telemetryService(telemetryService), _powerManager(powerManager),
@@ -81,18 +81,19 @@ bool SystemController::start()
 		_telemetryService.stop();
 		return false;
 	}
-	if (_sim7600.init() != constants::ErrorCode::OK || !_sim7600.start()) {
+	if (!_sim7600Service.start()) {
 		_errorHandler.report(constants::ErrorCode::MODEM_AT_TIMEOUT);
 		_authenticationService.stop();
 		_diagnosticsService.stop();
 		_telemetryService.stop();
 		return false;
 	}
-	if (!_sim7600.waitForNetwork(network::MODEM_NETWORK_REGISTRATION_TIMEOUT_MS) ||
-		!_sim7600.configurePdp(network::APN_DEFAULT) ||
-		!_sim7600.activatePdp(network::MODEM_PDP_CONTEXT_TIMEOUT_MS)) {
+	if (!_sim7600Service.waitForNetwork(
+			network::MODEM_NETWORK_REGISTRATION_TIMEOUT_MS) ||
+		!_sim7600Service.connectInternet(
+			network::APN_DEFAULT, network::MODEM_PDP_CONTEXT_TIMEOUT_MS)) {
 		_errorHandler.report(constants::ErrorCode::MODEM_REGISTRATION_FAILED);
-		_sim7600.stop();
+		_sim7600Service.stop();
 		_authenticationService.stop();
 		_diagnosticsService.stop();
 		_telemetryService.stop();
@@ -103,7 +104,7 @@ bool SystemController::start()
 		!_mqttClient.setCredentials(credentials) ||
 		!_mqttClient.connect(network::MQTT_BROKER_HOST, network::MQTT_BROKER_PORT)) {
 		_errorHandler.report(constants::ErrorCode::MQTT_CONNECT_FAILED);
-		_sim7600.stop();
+		_sim7600Service.stop();
 		_authenticationService.stop();
 		_diagnosticsService.stop();
 		_telemetryService.stop();
@@ -111,7 +112,7 @@ bool SystemController::start()
 	}
 	if (!_rfidService.start()) {
 		_mqttClient.disconnect();
-		_sim7600.stop();
+		_sim7600Service.stop();
 		_authenticationService.stop();
 		_diagnosticsService.stop();
 		_telemetryService.stop();
@@ -120,7 +121,7 @@ bool SystemController::start()
 	if (!_eventBus.start()) {
 		_rfidService.stop();
 		_mqttClient.disconnect();
-		_sim7600.stop();
+		_sim7600Service.stop();
 		_authenticationService.stop();
 		_diagnosticsService.stop();
 		_telemetryService.stop();
@@ -158,7 +159,7 @@ void SystemController::stop()
 {
 	_rfidService.stop();
 	_mqttClient.disconnect();
-	_sim7600.stop();
+	_sim7600Service.stop();
 	_relayDriver.stop();
 	_fuelDriver.stop();
 	_rtcDriver.stop();

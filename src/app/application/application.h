@@ -5,10 +5,10 @@
 #include "app/task_manager/task_manager.hpp"
 #include "core/event_bus/event_bus.h"
 #include "interfaces/irfid_driver.h"
-#include "drivers/sim7600/sim7600_driver.h"
 #include "managers/alert_manager/alert_manager.hpp"
 #include "services/authentication/authentication_service.h"
 #include "services/rfid/rfid_service.h"
+#include "services/sim7600/sim7600_service.h"
 #include "services/diagnostics/diagnostics_service.h"
 #include "core/power/power_monitor.h"
 #include "core/error_handler/error_handler.h"
@@ -27,7 +27,7 @@ public:
 				managers::AlertManager& alertManager,
 				services::AuthenticationService& authenticationService,
 				services::RfidService& rfidService,
-				drivers::Sim7600Driver& sim7600,
+				services::Sim7600Service& sim7600Service,
 				services::DiagnosticsService& diagnosticsService,
 				core::PowerMonitor& powerMonitor,
 				core::ErrorHandler& errorHandler,

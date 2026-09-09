@@ -28,15 +28,29 @@ public:
 				  char* response, std::size_t responseSize,
 				  uint32_t timeoutMs);
 	bool testAt(uint32_t timeoutMs = 1000U);
+	bool getModemInformation(char* information, std::size_t informationSize);
+	bool isSimReady();
+	bool hasSignal();
+	bool isNetworkRegistered();
+	bool hasOperator();
+	bool hasRadioService();
+	bool isPacketAttached();
 	bool waitForNetwork(uint32_t timeoutMs);
 	bool configurePdp(const char* apn);
 	bool activatePdp(uint32_t timeoutMs);
+	bool getIpAddress(char* ipAddress, std::size_t ipAddressSize);
+	bool isDataConnected() const;
 
 private:
+	bool sendDiagnosticCommand(const char* command, char* response,
+						   std::size_t responseSize, uint32_t timeoutMs);
+	void drainInput();
+
 	hal::UartHal& _uartHal;
 	bool _initialized;
 	bool _healthy;
 	bool _active;
+	bool _dataConnected;
 };
 
 }  // namespace drivers

@@ -38,6 +38,7 @@
 #include "managers/power_manager/power_manager.h"
 #include "managers/ota_manager/ota_manager.h"
 #include "services/rfid/rfid_service.h"
+#include "services/sim7600/sim7600_service.h"
 #include "services/security/provisioning_service.h"
 #include "services/security/ota_key_store.h"
 
@@ -61,6 +62,7 @@ fortico::drivers::RtcDriver g_rtcDriver(g_i2cHal);
 fortico::drivers::SdDriver g_sdDriver(g_spiHal);
 fortico::drivers::RfidDriver g_rfidDriver(g_i2cHal);
 fortico::drivers::Sim7600Driver g_sim7600(g_uartHal);
+fortico::services::Sim7600Service g_sim7600Service(g_sim7600);
 fortico::middleware::CellularMqttClient g_mqttClient(g_sim7600);
 
 fortico::core::EventBus g_eventBus;
@@ -102,7 +104,7 @@ fortico::app::Application g_application(
     g_alertManager,
     g_authenticationService,
     g_rfidService,
-    g_sim7600,
+    g_sim7600Service,
     g_diagnosticsService,
     g_powerMonitor,
     g_errorHandler,

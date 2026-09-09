@@ -4,7 +4,6 @@
 #include "core/error_handler/error_handler.h"
 #include "core/event_bus/event_bus.h"
 #include "core/power/power_monitor.h"
-#include "drivers/sim7600/sim7600_driver.h"
 #include "drivers/relay/relay_driver.h"
 #include "drivers/fuel/fuel_driver.h"
 #include "drivers/rtc/rtc_driver.h"
@@ -20,6 +19,7 @@
 #include "services/diagnostics/diagnostics_service.h"
 #include "services/rfid/rfid_service.h"
 #include "services/security/security_service.h"
+#include "services/sim7600/sim7600_service.h"
 #include "services/storage/storage_service.h"
 #include "services/telemetry/telemetry_service.h"
 
@@ -32,7 +32,7 @@ public:
 					 managers::AlertManager& alertManager,
 					 services::AuthenticationService& authenticationService,
 					 services::RfidService& rfidService,
-					 drivers::Sim7600Driver& sim7600,
+					 services::Sim7600Service& sim7600Service,
 					 services::DiagnosticsService& diagnosticsService,
 					 core::PowerMonitor& powerMonitor,
 					 core::ErrorHandler& errorHandler,
@@ -63,7 +63,7 @@ private:
 	managers::AlertManager& _alertManager;
 	services::AuthenticationService& _authenticationService;
 	services::RfidService& _rfidService;
-	drivers::Sim7600Driver& _sim7600;
+	services::Sim7600Service& _sim7600Service;
 	services::DiagnosticsService& _diagnosticsService;
 	core::PowerMonitor& _powerMonitor;
 	core::ErrorHandler& _errorHandler;
