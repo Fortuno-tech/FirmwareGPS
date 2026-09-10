@@ -3,7 +3,8 @@
 #include "rfid_service.h"
 #include "time_service.h"
 
-RFIDService rfidService;
+ForticoDrivers::PN532Driver pn532Driver;
+RFIDService rfidService(pn532Driver);
 TimeService timeService;
 
 void setup()

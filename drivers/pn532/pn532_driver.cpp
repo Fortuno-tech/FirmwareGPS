@@ -22,6 +22,15 @@ bool PN532Driver::begin()
     Serial.println("       PN532 DRIVER");
     Serial.println("=================================");
 
+    if (!ForticoHAL::I2CHAL::init())
+    {
+        Serial.println("[PN532] I2C INIT : FAILED");
+        _ready = false;
+        return false;
+    }
+
+    Serial.println("[PN532] I2C bus ready");
+
     _pn532.begin();
 
     uint32_t versiondata =
