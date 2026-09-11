@@ -178,7 +178,7 @@ void RfidService::update()
         _driver.readUid(
             uid,
             uidLength,
-            1000U);
+            500U);
 
     /*
      * ========================================================
@@ -193,8 +193,6 @@ void RfidService::update()
 
     if (!uidAvailable) {
 
-        ++_readFailureCount;
-
         if (_cardPresent) {
 
             Serial.println(
@@ -208,22 +206,8 @@ void RfidService::update()
          * à chaque tick. On ajoute un backoff progressif pour éviter de
          * relancer requestFrom() en boucle lorsque le PN532 ne répond pas.
          */
-        uint32_t backoffMs = 1000U;
-
-        if (_readFailureCount >= 5U) {
-            backoffMs = 5000U;
-        }
-
-        if (_readFailureCount >= 12U) {
-            backoffMs = 15000U;
-        }
-
-        Serial.printf(
-            "[RFID] Aucun badge / readUid false (echec=%u), backoff=%lu ms\n",
-            static_cast<unsigned int>(_readFailureCount),
-            static_cast<unsigned long>(backoffMs));
-
-        _nextPollMs = nowMs + backoffMs;
+        // Absence de badge : état normal, sans backoff ni erreur I2C.
+        _readFailureCount = 0U;
 
         return;
     }

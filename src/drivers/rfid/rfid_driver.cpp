@@ -19,14 +19,17 @@ RfidDriver::RfidDriver(hal::I2cHal& i2cHal)
 
 #ifdef ESP32_TARGET
     , _pn532(
-        -1,
-        -1,
+        pins::PN532_IRQ,
+        pins::PN532_RESET,
         &i2cHal.native())
     , _taskHandle(nullptr)
     , _resultMutex(nullptr)
     , _taskRunning(false)
     , _taskStarted(false)
     , _passiveDetectionStarted(false)
+    , _awaitingDetectionAck(false)
+    , _irqPending(false)
+    , _irqAttached(false)
     , _lastDetectionError(0U)
     , _detectionStartCount(0U)
     , _irqWaitCount(0U)
@@ -91,6 +94,15 @@ void RfidDriver::configurePins()
     digitalWrite(
         pins::PN532_RESET,
         HIGH);
+}
+
+
+void IRAM_ATTR RfidDriver::irqHandler(void* context)
+{
+    RfidDriver* const driver = static_cast<RfidDriver*>(context);
+    if (driver != nullptr) {
+        driver->_irqPending = true;
+    }
 }
 
 
@@ -216,20 +228,6 @@ bool RfidDriver::configurePn532()
      */
     applyPn532I2cSettings();
 
-    const bool retriesConfigured =
-        _pn532.setPassiveActivationRetries(
-            PN532_PASSIVE_ACTIVATION_RETRIES);
-
-    if (!retriesConfigured) {
-
-        _i2cHal.unlock();
-
-        Serial.println(
-            "[RFID][ERROR] Activation retries echouee");
-
-        return false;
-    }
-
     _i2cHal.unlock();
 
     Serial.println(
@@ -296,7 +294,11 @@ bool RfidDriver::startPassiveTargetDetection()
     }
 
     const uint8_t transmissionError = wire.endTransmission();
-    if (transmissionError != 0U) {
+    // Le PN532 peut maintenir SCL bas pendant le traitement de la commande.
+    // Arduino-ESP32 remonte alors 5 (timeout) alors que la trame a deja ete
+    // recue; Adafruit_I2CDevice ignore egalement ce retour dans writecommand.
+    // L'IRQ confirmera ensuite l'ACK ou la reponse finale.
+    if (transmissionError != 0U && transmissionError != 5U) {
         _lastDetectionError = static_cast<uint8_t>(10U + transmissionError);
         if (_lastDetectionError == PN532_INVALID_STATE_ERROR) {
             _passiveDetectionStarted = false;
@@ -329,102 +331,66 @@ bool RfidDriver::readPassiveTargetResponse(
     uidLength = 0U;
 
     TwoWire& wire = _i2cHal.native();
-    uint8_t header[7U]{};
-
-    const size_t headerRequestSize = wire.requestFrom(
+    uint8_t response[21U]{};
+    const size_t responseSize = wire.requestFrom(
         static_cast<int>(RFID_PN532_I2C_ADDRESS),
-        static_cast<int>(sizeof(header)));
+        static_cast<int>(sizeof(response)));
 
-    if (headerRequestSize != sizeof(header)) {
+    if (responseSize != sizeof(response)) {
         Serial.printf(
-            "[RFID][DBG] readPassiveTargetResponse: header request failed, requested=%zu received=%zu\n",
-            sizeof(header),
-            headerRequestSize);
+            "[RFID][DBG] readPassiveTargetResponse: request failed, requested=%zu received=%zu\n",
+            sizeof(response), responseSize);
         return false;
     }
 
-    for (uint8_t index = 0U; index < sizeof(header); ++index) {
-        header[index] = static_cast<uint8_t>(wire.read());
+    for (uint8_t index = 0U; index < sizeof(response); ++index) {
+        response[index] = static_cast<uint8_t>(wire.read());
     }
 
-    Serial.printf(
-        "[RFID][DBG] readPassiveTargetResponse: header=[%02X %02X %02X %02X %02X %02X %02X]\n",
-        header[0], header[1], header[2], header[3], header[4], header[5], header[6]);
-
-    // header[0] is the I2C status byte; the frame starts at header[1].
-    if (header[0] != 0x01U ||
-        header[1] != 0x00U ||
-        header[2] != 0x00U ||
-        header[3] != 0xFFU) {
+    // Le premier IRQ est l'ACK de commande; l'IRQ suivant contient le resultat.
+    if (_awaitingDetectionAck && response[0] == 0x01U &&
+        response[1] == 0x00U && response[2] == 0x00U &&
+        response[3] == 0xFFU && response[4] == 0x00U &&
+        response[5] == 0xFFU && response[6] == 0x00U) {
+        _awaitingDetectionAck = false;
         return false;
     }
 
-    const uint8_t payloadLength = header[4];
+    // response[0] est le statut I2C; la trame PN532 commence a response[1].
+    if (response[0] != 0x01U || response[1] != 0x00U ||
+        response[2] != 0x00U || response[3] != 0xFFU) {
+        return false;
+    }
+
+    const uint8_t payloadLength = response[4];
     if (payloadLength < 2U ||
-        header[5] != static_cast<uint8_t>(~payloadLength + 1U)) {
+        response[5] != static_cast<uint8_t>(~payloadLength + 1U) ||
+        static_cast<size_t>(payloadLength) + 8U > sizeof(response) ||
+        response[6] != 0xD5U || response[7] != 0x4BU) {
         return false;
     }
 
-    const uint8_t remainingLength = payloadLength + 1U;
-    uint8_t remaining[33U]{};
-
-    if (remainingLength + 1U > sizeof(remaining)) {
-        Serial.printf(
-            "[RFID][DBG] readPassiveTargetResponse: remaining buffer too small, remainingLength=%u\n",
-            static_cast<unsigned int>(remainingLength));
-        return false;
-    }
-
-    const size_t remainingRequestSize = wire.requestFrom(
-        static_cast<int>(RFID_PN532_I2C_ADDRESS),
-        static_cast<int>(remainingLength + 1U));
-
-    if (remainingRequestSize != static_cast<size_t>(remainingLength + 1U)) {
-        Serial.printf(
-            "[RFID][DBG] readPassiveTargetResponse: remaining request failed, requested=%u received=%zu\n",
-            static_cast<unsigned int>(remainingLength + 1U),
-            remainingRequestSize);
-        return false;
-    }
-
-    // Chaque lecture I2C PN532 commence par un octet d'etat.
-    (void)wire.read();
-
-    for (uint8_t index = 0U; index < remainingLength; ++index) {
-        remaining[index] = static_cast<uint8_t>(wire.read());
-    }
-
-    Serial.printf(
-        "[RFID][DBG] readPassiveTargetResponse: remaining bytes=[%02X %02X %02X %02X %02X %02X %02X %02X ...]\n",
-        remaining[0], remaining[1], remaining[2], remaining[3], remaining[4], remaining[5], remaining[6], remaining[7]);
-
-    // A response must be sent by the PN532 and answer InListPassiveTarget.
-    if (header[6] != 0xD5U ||
-        remaining[0] != 0x4BU) {
-        return false;
-    }
-
-    // No target is a valid response, not an I2C failure.
-    if (remaining[1] == 0U) {
+    // NbTg=0 est une reponse valide sans badge.
+    if (response[8] == 0U) {
         return true;
     }
 
-    if (remaining[1] != 1U ||
-        remaining[6] == 0U ||
-        remaining[6] > 16U ||
-        static_cast<uint16_t>(7U + remaining[6] + 2U) > remainingLength ||
+    const uint8_t detectedUidLength = response[13];
+    if (response[8] != 1U || detectedUidLength == 0U ||
+        detectedUidLength > 16U ||
+        static_cast<size_t>(14U + detectedUidLength) > sizeof(response) ||
         uid == nullptr) {
         return false;
     }
 
-    uidLength = remaining[6];
+    uidLength = detectedUidLength;
     for (uint8_t index = 0U; index < uidLength; ++index) {
-        uid[index] = remaining[7U + index];
+        uid[index] = response[14U + index];
     }
 
     Serial.printf(
         "[RFID] Reponse PN532: cible=%u uidLength=%u\n",
-        static_cast<unsigned int>(remaining[1]),
+        static_cast<unsigned int>(response[8]),
         static_cast<unsigned int>(uidLength));
 
     return true;
@@ -462,13 +428,22 @@ constants::ErrorCode RfidDriver::init()
         pins::I2C_SDA,
         pins::I2C_SCL);
 
+    // GPIO35 est une entree uniquement; le module PN532 doit fournir son
+    // pull-up IRQ. GPIO26 pilote RSTPD_N avant l'initialisation du lecteur.
+    configurePins();
+    attachInterruptArg(
+        pins::PN532_IRQ,
+        &RfidDriver::irqHandler,
+        this,
+        FALLING);
+    _irqAttached = true;
+
     /*
-     * Mode I2C pur recommandé pour le PN532.
-     * Le module répond sur SDA/SCL sans IRQ ni RESET logiciel,
-     * donc on évite ici tout reset matériel forcé.
+     * Le PN532 utilise le bus I2C fourni par I2cHal. IRQ et RESET restent
+     * sur leurs GPIO dédiés; RESET est utilisé pour repartir d'un état connu.
      */
     Serial.println(
-        "[RFID] PN532 en mode I2C pur (IRQ/RESET non requis)");
+        "[RFID] PN532 I2C: IRQ=GPIO35, RESET=GPIO26");
 
     /*
      * Recherche du PN532
@@ -594,6 +569,8 @@ bool RfidDriver::stop()
 
     _taskRunning = false;
     _passiveDetectionStarted = false;
+    _awaitingDetectionAck = false;
+    _irqPending = false;
 
     if (_taskHandle != nullptr) {
 
@@ -672,6 +649,8 @@ void RfidDriver::reset()
 
     _taskRunning = false;
     _passiveDetectionStarted = false;
+    _awaitingDetectionAck = false;
+    _irqPending = false;
 
     performHardwareReset();
 
@@ -721,9 +700,6 @@ bool RfidDriver::readUid(
 
 #ifdef ESP32_TARGET
 
-    const uint32_t effectiveTimeoutMs =
-        timeoutMs == 0U ? PN532_COMMAND_TIMEOUT_MS : timeoutMs;
-
     if (!_i2cHal.lock(
             hardware::I2C_MUTEX_TIMEOUT_MS)) {
 
@@ -731,15 +707,11 @@ bool RfidDriver::readUid(
     }
 
     applyPn532I2cSettings();
-    _i2cHal.native().setTimeOut(PN532_I2C_POLLING_TIMEOUT_MS);
-
-    const bool result =
-        _pn532.readPassiveTargetID(
-            PN532_MIFARE_ISO14443A,
-            uid,
-            &uidLength,
-            effectiveTimeoutMs);
-
+    const bool result = _pn532.readPassiveTargetID(
+        PN532_MIFARE_ISO14443A,
+        uid,
+        &uidLength,
+        static_cast<uint16_t>(timeoutMs));
     _i2cHal.native().setTimeOut(hardware::I2C_TRANSACTION_MAX_MS);
     _i2cHal.unlock();
 

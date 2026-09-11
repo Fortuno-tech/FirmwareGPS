@@ -53,11 +53,26 @@ bool I2cHal::init(int sdaPin, int sclPin, uint32_t speedHz) {
     if (!lock(50U)) {
         return false;
     }
+
+    // Wire est global : le HAL en est l'unique proprietaire et evite toute
+    // reinitialisation pendant l'execution des services.
+    if (initialized_) {
+        const bool matches = sdaPin_ == sdaPin &&
+                             sclPin_ == sclPin &&
+                             speedHz_ == speedHz;
+        unlock();
+        return matches;
+    }
+
     wire_ = &Wire;
     const bool ok = wire_->begin(sdaPin, sclPin, speedHz);
     if (ok) {
         wire_->setClock(speedHz);
         wire_->setTimeOut(hardware::I2C_TRANSACTION_MAX_MS);
+        sdaPin_ = sdaPin;
+        sclPin_ = sclPin;
+        speedHz_ = speedHz;
+        initialized_ = true;
     }
     unlock();
     return ok;

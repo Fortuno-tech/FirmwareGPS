@@ -33,6 +33,10 @@ private:
 #ifdef ESP32_TARGET
     ::TwoWire* wire_ = nullptr;
     void* mutex_ = nullptr;
+    bool initialized_ = false;
+    int sdaPin_ = -1;
+    int sclPin_ = -1;
+    uint32_t speedHz_ = 0U;
 #endif
 };
 
