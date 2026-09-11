@@ -46,7 +46,9 @@ bool Sim7600Service::runDiagnostics(Sim7600Diagnostics& diagnostics)
 {
     diagnostics = {};
     if (!isRunning()) return false;
-    char modemInformation[128]{};
+    // ATI may include manufacturer, model, revision, IMEI and capabilities.
+    // 128 bytes can truncate a valid SIM7600 response before its final OK.
+    char modemInformation[512]{};
     diagnostics.modemIdentified = _driver.getModemInformation(
         modemInformation, sizeof(modemInformation));
     diagnostics.simReady = _driver.isSimReady();

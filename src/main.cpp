@@ -1,5 +1,7 @@
 #include <Arduino.h>
 
+#include <cctype>
+
 #include "app/application/application.h"
 #include "core/event_bus/event_bus.h"
 #include "core/diagnostics/diagnostics.h"
@@ -49,6 +51,7 @@
 #include "services/security/ota_key_store.h"
 #include "config/pin_config.h"
 #include "config/hardware_config.h"
+#include "config/security_config.h"
 
 namespace {
 
@@ -140,9 +143,56 @@ fortico::app::Application g_application(
 
 bool g_started = false;
 
+constexpr const char* kDefaultRfidUid = "91:51:E2:06";
+
+bool isValidRfidUid(const String& uid)
+{
+    // PN532 ISO14443-A UIDs have 4, 7, or 10 bytes and use XX:XX:... notation.
+    const size_t length = uid.length();
+    const size_t byteCount = (length + 1U) / 3U;
+    if ((byteCount != 4U && byteCount != 7U && byteCount != 10U) ||
+        length != byteCount * 3U - 1U) {
+        return false;
+    }
+
+    for (size_t index = 0U; index < length; ++index) {
+        if ((index + 1U) % 3U == 0U) {
+            if (uid[index] != ':') return false;
+        } else if (!isxdigit(static_cast<unsigned char>(uid[index]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool seedDefaultRfidBadge()
+{
+    uint32_t seeded = 0U;
+    if (!g_nvsDriver.open(fortico::security::NVS_NAMESPACE, true)) {
+        return false;
+    }
+    const bool markerExists = g_nvsDriver.getUInt32(
+        fortico::security::NVS_KEY_RFID_DEFAULT_SEEDED, seeded);
+    g_nvsDriver.close();
+    if (markerExists && seeded == 1U) return true;
+
+    const bool badgeReady =
+        g_storageService.isBadgeAuthorized(kDefaultRfidUid) ||
+        g_storageService.addBadge(kDefaultRfidUid);
+    if (!badgeReady || !g_nvsDriver.open(fortico::security::NVS_NAMESPACE, false)) {
+        return false;
+    }
+    const bool markerSaved = g_nvsDriver.putUInt32(
+        fortico::security::NVS_KEY_RFID_DEFAULT_SEEDED, 1U);
+    g_nvsDriver.close();
+    return markerSaved;
+}
+
 }  // namespace
 
-void handleSerialProvisioning(fortico::services::ProvisioningService& provisioningService)
+void handleSerialProvisioning(
+    fortico::services::ProvisioningService& provisioningService,
+    fortico::services::StorageService& storageService)
 {
     const bool alreadyProvisioned = provisioningService.isProvisioned();
     const uint32_t timeoutMs = alreadyProvisioned ? 5000U : 30000U;
@@ -166,7 +216,38 @@ void handleSerialProvisioning(fortico::services::ProvisioningService& provisioni
                 if (line.length() > 0) {
                     lastActivityMs = millis();
 
-                    if (line == "PROV:CERT:CHECK") {
+                    if (line.startsWith("PROV:RFID:")) {
+                        // Most serial monitors do not echo transmitted text.
+                        // Echo RFID administration commands only; never echo
+                        // provisioning credentials or certificate payloads.
+                        Serial.print(F("PROV:RFID:COMMAND "));
+                        Serial.println(line);
+                        // Physical UART administration is deliberately limited
+                        // to this short provisioning window on an already
+                        // provisioned device.
+                        const bool add = line.startsWith("PROV:RFID:ADD:");
+                        const bool remove = line.startsWith("PROV:RFID:REMOVE:");
+                        const int uidStart = add ? 14 : (remove ? 17 : -1);
+                        String uid = uidStart >= 0 ? line.substring(uidStart) : "";
+                        uid.toUpperCase();
+
+                        if (!alreadyProvisioned || !storageService.isRunning() ||
+                            !isValidRfidUid(uid)) {
+                            Serial.println(F("PROV:RFID:FAIL"));
+                        } else if (add) {
+                            if (storageService.isBadgeAuthorized(uid.c_str())) {
+                                Serial.println(F("PROV:RFID:ALREADY_PRESENT"));
+                            } else if (storageService.addBadge(uid.c_str())) {
+                                Serial.println(F("PROV:RFID:ADDED"));
+                            } else {
+                                Serial.println(F("PROV:RFID:FAIL"));
+                            }
+                        } else if (remove && storageService.removeBadge(uid.c_str())) {
+                            Serial.println(F("PROV:RFID:REMOVED"));
+                        } else {
+                            Serial.println(F("PROV:RFID:FAIL"));
+                        }
+                    } else if (line == "PROV:CERT:CHECK") {
                         if (provisioningService.hasModemCertificate("hivemq-ca.pem")) {
                             Serial.println(F("PROV:CERT:PRESENT"));
                         } else {
@@ -288,7 +369,17 @@ void setup()
     g_sim7600.start();
 
     fortico::services::ProvisioningService provisioningService(g_securityService, g_nvsDriver, &g_sim7600);
-    handleSerialProvisioning(provisioningService);
+    const bool alreadyProvisioned = provisioningService.isProvisioned();
+    if (alreadyProvisioned && (!g_securityService.start() || !g_storageService.start())) {
+        g_logger.error(fortico::logging::TAG_SYSTEM_CONTROLLER,
+                       "initialisation stockage RFID impossible");
+        return;
+    }
+    if (alreadyProvisioned && !seedDefaultRfidBadge()) {
+        g_logger.warn(fortico::logging::TAG_SYSTEM_CONTROLLER,
+                      "ajout du badge RFID par defaut impossible");
+    }
+    handleSerialProvisioning(provisioningService, g_storageService);
 
     g_securityService.start();
 
@@ -317,4 +408,3 @@ void loop()
     (void)g_started;
     g_delayHal.waitMs(10U);
 }
-

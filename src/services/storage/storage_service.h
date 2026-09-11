@@ -14,7 +14,7 @@ namespace services {
 
 class StorageService : public interfaces::IService {
 public:
-	static constexpr std::size_t MaxBadges = 32U;
+	static constexpr std::size_t MaxBadges = 2U;
 	StorageService(interfaces::INvsDriver& nvsDriver,
 				   SecurityService& security,
 				   interfaces::ISdDriver* sdDriver = nullptr);
