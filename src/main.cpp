@@ -7,6 +7,7 @@
 #include "core/diagnostics/diagnostics.h"
 #include "core/error_handler/error_handler.h"
 #include "core/logger/logger.h"
+#include "core/logger/composite_log_sink.h"
 #include "core/memory/memory_monitor.h"
 #include "core/power/power_monitor.h"
 #include "drivers/battery/battery_driver.h"
@@ -40,6 +41,7 @@
 #include "services/diagnostics/diagnostics_service.h"
 #include "services/security/security_service.h"
 #include "services/storage/storage_service.h"
+#include "services/storage/sd_log_sink.h"
 #include "services/telemetry/telemetry_service.h"
 #include "services/mqtt/mqtt_telemetry_sink.h"
 #include "managers/power_manager/power_manager.h"
@@ -93,6 +95,8 @@ fortico::managers::RelayManager g_relayManager(g_relayDriver);
 fortico::managers::FuelManager g_fuelManager(g_fuelDriver);
 fortico::core::ErrorHandler g_errorHandler(&g_eventBus);
 fortico::hal::SerialLogSink g_serialLogSink;
+fortico::services::SdLogSink g_sdLogSink(g_sdDriver);
+fortico::core::CompositeLogSink g_logSink(g_serialLogSink, g_sdLogSink);
 fortico::core::Logger g_logger;
 fortico::middleware::CellularMqttClient g_mqttClient(g_sim7600, g_logger);
 fortico::services::SecurityService g_securityService(g_nvsDriver);
@@ -324,7 +328,7 @@ void setup()
     g_delayHal.waitMs(250U);
 
     if (!g_logger.init(fortico::logging::DEVELOPMENT_MIN_LEVEL,
-                       &g_serialLogSink) || !g_logger.start()) {
+                       &g_logSink) || !g_logger.start()) {
         Serial.println(F("[BOOT][ERROR] Logger initialization failed"));
         return;
     }

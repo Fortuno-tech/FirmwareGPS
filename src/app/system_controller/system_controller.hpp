@@ -113,10 +113,12 @@ private:
 	bool _healthStateKnown;
 	uint64_t _lastHeartbeatMs;
 	uint64_t _lastAuthenticationTimestamp;
+	uint64_t _lastGpsLogMs;
 
 	void setBootStage(BootStage stage, const char* message);
 	bool failBoot(const char* message, constants::ErrorCode error);
 	void logSim7600Diagnostics();
+	void logGpsPosition();
 	void synchronizeRtcFromNetwork();
 };
 

@@ -41,7 +41,7 @@ SystemController::SystemController(
 	  _initialized(false), _running(false), _bootStage(BootStage::Idle),
 	  _lastNetworkTimeSyncMs(0U), _lastRfidHealthy(false),
 	  _lastSdHealthy(false), _healthStateKnown(false), _lastHeartbeatMs(0U),
-	  _lastAuthenticationTimestamp(0U)
+	  _lastAuthenticationTimestamp(0U), _lastGpsLogMs(0U)
 {
 }
 
@@ -150,6 +150,10 @@ bool SystemController::start()
 		_telemetryService.stop();
 		return false;
 	}
+	// Première mise à l'heure dès que le contexte de données est disponible.
+	// Les vérifications suivantes sont faites périodiquement dans update().
+	synchronizeRtcFromNetwork();
+	_lastNetworkTimeSyncMs = utils::Timer::millis();
 	logSim7600Diagnostics();
 	setBootStage(BootStage::ConnectingMqtt, "connexion MQTT cellulaire");
 	types::MqttCredentials credentials{};
@@ -198,6 +202,9 @@ bool SystemController::start()
 	if (!sdStarted || !_sdDriver.isHealthy()) {
 		_logger.warn(logging::TAG_SYSTEM_CONTROLLER,
 					 "SD indisponible: le diagnostic peut declencher une alerte");
+	} else {
+		_logger.info(logging::TAG_STORAGE,
+					 "journal SD actif: /fortico.log");
 	}
 	_running = true;
 	_lastNetworkTimeSyncMs = utils::Timer::millis();
@@ -208,6 +215,8 @@ bool SystemController::start()
 void SystemController::update()
 {
 	if (!_running) return;
+	_gpsService.update();
+	logGpsPosition();
 	const uint64_t rfidStartMs = utils::Timer::millis();
 	_rfidService.update();
 	const types::AuthenticationDecision decision = _authenticationService.decision();
@@ -270,7 +279,6 @@ void SystemController::update()
 	_fuelDriver.poll();
 	_rtcDriver.poll();
 	_sdDriver.poll();
-	_gpsService.update();
 	_diagnosticsService.update();
 	_telemetryService.update();
 }
@@ -332,6 +340,29 @@ void SystemController::logSim7600Diagnostics()
 		_logger.warn(logging::TAG_SIM7600,
 					 "diagnostic partiel: verifier SIM, antenne et enregistrement reseau");
 	}
+}
+
+void SystemController::logGpsPosition()
+{
+	constexpr uint64_t gpsLogIntervalMs = 5000U;
+	const uint64_t nowMs = utils::Timer::millis();
+	if (nowMs - _lastGpsLogMs < gpsLogIntervalMs) return;
+	_lastGpsLogMs = nowMs;
+
+	const types::GpsData& gps = _gpsService.data();
+	if (!gps.fixValid) {
+		_logger.info(logging::TAG_TRACKING,
+					 "GPS: attente fix, mode=%u satellites=%u HDOP=%.2f PDOP=%.2f",
+					 static_cast<unsigned int>(gps.fixMode),
+					 static_cast<unsigned int>(gps.satellites), gps.hdop, gps.pdop);
+		return;
+	}
+
+	_logger.info(logging::TAG_TRACKING,
+				 "GPS: fix=%u lat=%.6f lon=%.6f alt=%.0fm vitesse=%.1fkm/h cap=%.0f sat=%u HDOP=%.1f PDOP=%.1f",
+				 static_cast<unsigned int>(gps.fixMode), gps.latitude, gps.longitude,
+				 gps.altitudeMeters, gps.speedKmh, gps.headingDeg,
+				 static_cast<unsigned int>(gps.satellites), gps.hdop, gps.pdop);
 }
 
 void SystemController::synchronizeRtcFromNetwork()
