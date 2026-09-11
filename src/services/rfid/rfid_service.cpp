@@ -178,7 +178,7 @@ void RfidService::update()
         _driver.readUid(
             uid,
             uidLength,
-            500U);
+            hardware::RFID_READ_TIMEOUT_MS);
 
     /*
      * ========================================================

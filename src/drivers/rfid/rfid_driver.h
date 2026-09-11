@@ -52,7 +52,7 @@ private:
     static constexpr uint32_t PN532_DETECTION_POLL_MS = 100U;
     static constexpr uint32_t PN532_I2C_TRANSACTION_TIMEOUT_MS = 200U;
     static constexpr uint8_t PN532_PASSIVE_ACTIVATION_RETRIES = 0x01U;
-    static constexpr uint32_t PN532_COMMAND_TIMEOUT_MS = 500U;
+    static constexpr uint32_t PN532_COMMAND_TIMEOUT_MS = 100U;
     static constexpr uint32_t PN532_IDLE_POLL_INTERVAL_MS = 1000U;
     static constexpr uint8_t PN532_INVALID_STATE_ERROR = 0x15U;
 

@@ -24,6 +24,8 @@ constexpr uint32_t I2C_MUTEX_TIMEOUT_MS = 100;
 constexpr uint32_t I2C_TRANSACTION_MAX_MS = 100;
 
 constexpr uint32_t RFID_POLL_INTERVAL_MS = 300;
+/// Attente maximale d'un badge pour une tentative RFID non bloquante.
+constexpr uint32_t RFID_READ_TIMEOUT_MS = 100;
 constexpr uint32_t RTC_POLL_INTERVAL_MS = 1800000UL;
 constexpr uint32_t NETWORK_TIME_SYNC_INTERVAL_MS = 18000000UL;
 

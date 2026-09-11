@@ -715,33 +715,6 @@ bool RfidDriver::readUid(
     _i2cHal.native().setTimeOut(hardware::I2C_TRANSACTION_MAX_MS);
     _i2cHal.unlock();
 
-    if (result && uidLength > 0U && uidLength <= 16U) {
-        Serial.print(
-            "[RFID][DBG] readUid: UID=");
-
-        for (uint8_t index = 0U;
-             index < uidLength;
-             ++index) {
-
-            if (index > 0U) {
-                Serial.print(":");
-            }
-
-            if (uid[index] < 0x10U) {
-                Serial.print("0");
-            }
-
-            Serial.print(
-                uid[index],
-                HEX);
-        }
-
-        Serial.println();
-    } else {
-        Serial.println(
-            "[RFID][DBG] readUid: no ISO14443A card detected or returned invalid UID length");
-    }
-
     return result && uidLength > 0U && uidLength <= 16U;
 
 #else
