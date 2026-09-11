@@ -2,6 +2,9 @@
 
 #include <cstring>
 #include <cstdio>
+#ifdef ESP32_TARGET
+#include <Arduino.h>
+#endif
 
 #include "config/hardware_config.h"
 #include "config/pin_config.h"
@@ -304,6 +307,38 @@ bool Sim7600Driver::isDataConnected() const
 	return _initialized && _active && _dataConnected;
 }
 
+bool Sim7600Driver::getNetworkDateTime(RtcDateTime& dateTime)
+{
+	if (!_initialized || !_active || !_healthy) return false;
+	char response[128]{};
+	if (!sendCommand("AT+CCLK?", response, sizeof(response),
+					hardware::SIM7600_AT_TIMEOUT_MS)) {
+		return false;
+	}
+	unsigned int year = 0U;
+	unsigned int month = 0U;
+	unsigned int day = 0U;
+	unsigned int hour = 0U;
+	unsigned int minute = 0U;
+	unsigned int second = 0U;
+	const char* timeText = std::strchr(response, '"');
+	if (timeText == nullptr || std::sscanf(timeText + 1, "%u/%u/%u,%u:%u:%u",
+					&year, &month, &day, &hour, &minute, &second) != 6) {
+		return false;
+	}
+	RtcDateTime value{
+		static_cast<uint16_t>(2000U + year), static_cast<uint8_t>(month),
+		static_cast<uint8_t>(day), static_cast<uint8_t>(hour),
+		static_cast<uint8_t>(minute), static_cast<uint8_t>(second)};
+	if (value.year < 2000U || value.year > 2099U || value.month < 1U ||
+		value.month > 12U || value.day < 1U || value.day > 31U ||
+		value.hour > 23U || value.minute > 59U || value.second > 59U) {
+		return false;
+	}
+	dateTime = value;
+	return true;
+}
+
 bool Sim7600Driver::hasCertificate(const char* certificateFile)
 {
 	if (certificateFile == nullptr || certificateFile[0] == '\0') return false;
@@ -335,6 +370,11 @@ bool Sim7600Driver::downloadCertificate(const char* certificateFile,
 	}
 	if (!_initialized || !_active) return false;
 
+	// Disable modem echo so payload bytes are not echoed back over UART
+	char echoResp[32]{};
+	sendCommand("ATE0", echoResp, sizeof(echoResp), hardware::SIM7600_AT_TIMEOUT_MS);
+	drainInput();
+
 	char command[64]{};
 	char promptResponse[64]{};
 	std::snprintf(command, sizeof(command), "AT+CCERTDOWN=\"%s\",%u",
@@ -342,6 +382,9 @@ bool Sim7600Driver::downloadCertificate(const char* certificateFile,
 
 	if (!sendCommandUntil(command, ">", promptResponse, sizeof(promptResponse),
 						  hardware::SIM7600_AT_TIMEOUT_LONG_MS)) {
+#ifdef ESP32_TARGET
+		Serial.printf("[PROV] Prompt '>' not received: '%s'\n", promptResponse);
+#endif
 		return false;
 	}
 
@@ -356,36 +399,86 @@ bool Sim7600Driver::downloadCertificate(const char* certificateFile,
 			if (n == 0U) return false;
 		}
 		totalWritten += n;
+		// If the modem was echoing while transmitting, drain echoed bytes
+		// so UART RX FIFO never overflows before transmission completes.
+		if (totalWritten < certLen) {
+			drainInput();
+		}
 	}
+	_delayHal.waitMs(50U);
 
-	// Wait for confirmation: \nOK, \r\nOK (timeout up to 15s)
-	char resp[256]{};
-	std::size_t respLen = 0U;
+	// Wait for confirmation: \r\nOK\r\n (timeout up to 15s).
+	// We read using a sliding window so that any remaining echoed payload bytes
+	// are absorbed without buffer overflow or premature exit.
+	char tail[128]{};
+	std::size_t tailLen = 0U;
+	std::size_t totalBytesReceived = 0U;
 	const uint32_t startMs = utils::Timer::millis();
 	bool confirmed = false;
-	while (utils::Timer::millis() - startMs < 15000U && respLen + 1U < sizeof(resp)) {
+
+	while (utils::Timer::millis() - startMs < 15000U) {
 		uint8_t byte = 0U;
-		if (_uartHal.read(&byte, 1U, 1U) == 0U) {
+		if (_uartHal.read(&byte, 1U, 5U) == 0U) {
 			_delayHal.waitMs(2U);
 			continue;
 		}
-		resp[respLen++] = static_cast<char>(byte);
-		resp[respLen] = '\0';
-		if (std::strstr(resp, "\nOK") != nullptr ||
-			std::strstr(resp, "\r\nOK") != nullptr) {
+		totalBytesReceived++;
+
+		if (tailLen + 1U < sizeof(tail)) {
+			tail[tailLen++] = static_cast<char>(byte);
+			tail[tailLen] = '\0';
+		} else {
+			std::memmove(tail, tail + 1, sizeof(tail) - 2);
+			tail[sizeof(tail) - 2] = static_cast<char>(byte);
+			tail[sizeof(tail) - 1] = '\0';
+		}
+
+		if (std::strstr(tail, "\r\nOK\r\n") != nullptr ||
+			std::strstr(tail, "\nOK\r\n") != nullptr ||
+			std::strstr(tail, "\r\nOK\n") != nullptr ||
+			std::strstr(tail, "\nOK\n") != nullptr) {
 			confirmed = true;
 			break;
 		}
-		if (std::strstr(resp, "\r\nERROR") != nullptr ||
-			std::strstr(resp, "\nERROR") != nullptr) {
+		// Also accept OK followed by silence (end of transmission)
+		if ((std::strstr(tail, "\r\nOK") != nullptr ||
+			 std::strstr(tail, "\nOK") != nullptr) &&
+			_uartHal.available() == 0) {
+			_delayHal.waitMs(20U);
+			if (_uartHal.available() == 0) {
+				confirmed = true;
+				break;
+			}
+		}
+
+		if (std::strstr(tail, "\r\nERROR") != nullptr ||
+			std::strstr(tail, "\nERROR") != nullptr ||
+			std::strstr(tail, "+CME ERROR") != nullptr) {
+#ifdef ESP32_TARGET
+			Serial.printf("[PROV] SIM7600 returned error during CCERTDOWN: '%s'\n", tail);
+#endif
 			return false;
 		}
 	}
 
-	if (!confirmed) return false;
+	if (!confirmed) {
+#ifdef ESP32_TARGET
+		Serial.printf("[PROV] SIM7600 confirm timeout (read %u bytes, last='%s')\n",
+					  static_cast<unsigned int>(totalBytesReceived), tail);
+#endif
+		return false;
+	}
 
 	// Verify certificate is present in AT+CCERTLIST
-	return hasCertificate(certificateFile);
+	const bool present = hasCertificate(certificateFile);
+#ifdef ESP32_TARGET
+	if (!present) {
+		Serial.println(F("[PROV] Certificate missing in AT+CCERTLIST after download"));
+	} else {
+		Serial.println(F("[PROV] Certificate verified in AT+CCERTLIST"));
+	}
+#endif
+	return present;
 }
 
 bool Sim7600Driver::sendDiagnosticCommand(const char* command, char* response,

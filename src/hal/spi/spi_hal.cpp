@@ -18,6 +18,8 @@ namespace hal {
 bool SpiHal::init(int clkPin, int mosiPin, int misoPin, int csPin)
 {
 #ifdef ESP32_TARGET
+    pinMode(csPin, OUTPUT);
+    digitalWrite(csPin, HIGH);
     spi_.begin(clkPin, misoPin, mosiPin, csPin);
     initialized_ = true;
     return true;

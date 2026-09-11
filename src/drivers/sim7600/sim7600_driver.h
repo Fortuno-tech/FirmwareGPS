@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "drivers/rtc/rtc_driver.h"
 #include "constants/errors.h"
 #include "hal/delay/delay_hal.h"
 #include "hal/uart/uart_hal.h"
@@ -48,6 +49,7 @@ public:
 	bool activatePdp(uint32_t timeoutMs);
 	bool getIpAddress(char* ipAddress, std::size_t ipAddressSize);
 	bool isDataConnected() const;
+	bool getNetworkDateTime(RtcDateTime& dateTime);
 	bool hasCertificate(const char* certificateFile);
 	bool deleteCertificate(const char* certificateFile);
 	bool downloadCertificate(const char* certificateFile, const uint8_t* certData,

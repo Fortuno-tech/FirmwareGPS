@@ -6,6 +6,7 @@
 #include "config/security_config.h"
 
 #ifdef ESP32_TARGET
+#include <Arduino.h>
 #include "drivers/sim7600/sim7600_driver.h"
 #endif
 
@@ -58,6 +59,11 @@ bool ProvisioningService::installModemCertificate(const char* certificateName,
         return false;
     }
     if (expectedSize != ExpectedHiveMqCertSize) {
+#ifdef ESP32_TARGET
+        Serial.printf("[PROV] Size mismatch: %u vs %u\n",
+                      static_cast<unsigned int>(expectedSize),
+                      static_cast<unsigned int>(ExpectedHiveMqCertSize));
+#endif
         return false;
     }
 
@@ -66,17 +72,35 @@ bool ProvisioningService::installModemCertificate(const char* certificateName,
     std::size_t decodedLen = sizeof(certBuffer);
 
     if (!base64Decode(base64Data, base64Len, certBuffer, decodedLen)) {
+#ifdef ESP32_TARGET
+        Serial.printf("[PROV] base64Decode failed, b64Len=%u\n",
+                      static_cast<unsigned int>(base64Len));
+#endif
         return false;
     }
 
     if (decodedLen != expectedSize || decodedLen != ExpectedHiveMqCertSize) {
+#ifdef ESP32_TARGET
+        Serial.printf("[PROV] Decoded len mismatch: %u vs %u\n",
+                      static_cast<unsigned int>(decodedLen),
+                      static_cast<unsigned int>(expectedSize));
+#endif
         return false;
     }
 
 #ifdef ESP32_TARGET
-    if (_sim7600Driver == nullptr) return false;
+    if (_sim7600Driver == nullptr) {
+        Serial.println(F("[PROV] Sim7600Driver is null!"));
+        return false;
+    }
+    Serial.println(F("[PROV] Deleting old certificate from SIM7600..."));
     _sim7600Driver->deleteCertificate(certificateName);
-    return _sim7600Driver->downloadCertificate(certificateName, certBuffer, decodedLen);
+    Serial.println(F("[PROV] Uploading certificate to SIM7600..."));
+    const bool ok = _sim7600Driver->downloadCertificate(certificateName, certBuffer, decodedLen);
+    if (!ok) {
+        Serial.println(F("[PROV] downloadCertificate failed!"));
+    }
+    return ok;
 #else
     return _sim7600Driver != nullptr;
 #endif

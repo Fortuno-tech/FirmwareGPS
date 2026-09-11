@@ -103,19 +103,31 @@ def main():
     print(f"Connecting to {args.port} at {args.baud} baud...")
     try:
         ser = serial.Serial(args.port, args.baud, timeout=1)
-        time.sleep(0.2)
+        # Pulse DTR/RTS to automatically trigger ESP32 hardware reset
+        try:
+            ser.dtr = False
+            ser.rts = True
+            time.sleep(0.15)
+            ser.rts = False
+            time.sleep(0.1)
+        except Exception:
+            pass
+
         ser.reset_input_buffer()
         ser.reset_output_buffer()
 
-        print("Listening for ESP32 readiness (PROV:READY)...")
+        print("Listening for ESP32 readiness (PROV:READY)... (or press EN/RST button)")
         start_time = time.time()
         got_ready = False
+        device_already_provisioned = False
 
         while time.time() - start_time < 30:
             if ser.in_waiting > 0:
                 line = ser.readline().decode("utf-8", errors="replace").strip()
                 if line:
                     print(f"ESP32 Log: {line}")
+                    if "Device provisioned" in line:
+                        device_already_provisioned = True
                     if "PROV:READY" in line or "[PROV] Device unprovisioned" in line or "[PROV] Device provisioned" in line:
                         got_ready = True
                         break
@@ -211,9 +223,18 @@ def main():
                         ser.close()
                         sys.exit(0)
                     elif "PROV:FAIL" in line:
-                        print("\nFAILURE: Provisioning rejected by ESP32 (already provisioned or invalid payload).")
-                        ser.close()
-                        sys.exit(1)
+                        if device_already_provisioned:
+                            print("\n==================================================")
+                            print("NOTICE: Device NVS credentials preserved (already provisioned).")
+                            if cert_ok or cert_status == "PRESENT":
+                                print("SUCCESS: HiveMQ CA certificate is present and verified on SIM7600!")
+                            print("==================================================")
+                            ser.close()
+                            sys.exit(0)
+                        else:
+                            print("\nFAILURE: Provisioning rejected by ESP32 (already provisioned or invalid payload).")
+                            ser.close()
+                            sys.exit(1)
 
             now = time.time()
             if now - last_retry > 2.0:

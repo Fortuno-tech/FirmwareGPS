@@ -59,7 +59,7 @@ bool AuthenticationManager::authenticate(const char* uid, uint64_t timestamp)
 				: constants::EventID::AUTH_DENIED;
 		_publisher->publish({eventId, timestamp, 0U});
 	}
-	return true;
+	return authorized;
 }
 
 types::AuthenticationDecision AuthenticationManager::decision() const

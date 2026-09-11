@@ -44,7 +44,7 @@ void TelemetryManager::setGps(const types::GpsData& gps) { _packet.gps = gps; }
 void TelemetryManager::setRelay(types::RelayState relay) { _packet.relay = relay; }
 void TelemetryManager::setAuthentication(types::AuthenticationResult result) { _packet.lastAuthResult = result; }
 void TelemetryManager::setTemperature(float temperatureC) { _packet.temperatureC = temperatureC; }
-types::TelemetryPacket TelemetryManager::packet() const { return _packet; }
+const types::TelemetryPacket& TelemetryManager::packet() const { return _packet; }
 
 }  // namespace managers
 }  // namespace fortico

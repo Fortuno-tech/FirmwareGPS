@@ -1,5 +1,7 @@
 #include "app/application/application.h"
 
+#include <Arduino.h>
+
 namespace fortico {
 namespace app {
 
@@ -91,6 +93,7 @@ void Application::updateTask(void* context)
 void Application::scheduledUpdate()
 {
     _systemController.update();
+
     _stateMachine.update(_systemController.powerState(),
                          _systemController.hasFault());
 }

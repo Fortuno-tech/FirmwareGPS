@@ -66,5 +66,15 @@ bool Sim7600Service::getIpAddress(char* ipAddress, std::size_t ipAddressSize)
     return isRunning() && _driver.getIpAddress(ipAddress, ipAddressSize);
 }
 
+bool Sim7600Service::isDataConnected() const
+{
+    return isRunning() && _driver.isDataConnected();
+}
+
+bool Sim7600Service::getNetworkDateTime(drivers::RtcDateTime& dateTime)
+{
+    return isDataConnected() && _driver.getNetworkDateTime(dateTime);
+}
+
 }  // namespace services
 }  // namespace fortico

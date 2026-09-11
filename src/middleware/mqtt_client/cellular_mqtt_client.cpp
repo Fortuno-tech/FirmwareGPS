@@ -46,6 +46,10 @@ bool CellularMqttClient::connect(const char* host, uint16_t port)
 
     char response[512]{};
     char command[384]{};
+
+    // Reinitialiser proprement la pile MQTT SIM7600 au cas ou un redemarrage a chaud a eu lieu
+    resetModemMqttStack();
+
     _logger.info(logging::TAG_MQTT, "verification certificat CA SIM7600");
     if (!_modem.hasCertificate(modem_mqtt::Commands::HIVE_MQ_CA_CERTIFICATE_FILE)) {
         _logger.error(logging::TAG_MQTT,
@@ -91,10 +95,17 @@ bool CellularMqttClient::connect(const char* host, uint16_t port)
     _logger.info(logging::TAG_MQTT, "demarrage service MQTT");
     if (!_modem.sendMqttCommand(modem_mqtt::Commands::START, "+CMQTTSTART: 0",
                                 response, sizeof(response), 15000U)) {
-        logMqttFailure("CMQTTSTART", response, "+CMQTTSTART:");
-        return false;
+        // Le code 23 signifie que le service MQTT est deja actif sur le SIM7600
+        if (std::strstr(response, "+CMQTTSTART: 23") != nullptr) {
+            _logger.info(logging::TAG_MQTT, "service MQTT deja actif (+CMQTTSTART: 23)");
+            _serviceStarted = true;
+        } else {
+            logMqttFailure("CMQTTSTART", response, "+CMQTTSTART:");
+            return false;
+        }
+    } else {
+        _serviceStarted = true;
     }
-    _serviceStarted = true;
 
     _logger.info(logging::TAG_MQTT, "acquisition client MQTT/TLS");
     const int acquireCommandLength = std::snprintf(
@@ -107,11 +118,18 @@ bool CellularMqttClient::connect(const char* host, uint16_t port)
         return false;
     }
     if (!_modem.sendCommand(command, response, sizeof(response), 5000U)) {
-        _logger.error(logging::TAG_MQTT, "CMQTTACCQ echoue");
-        releaseResources();
-        return false;
+        // Si le client est deja alloue (+CMQTTACCQ: 0,19), il est deja disponible
+        if (std::strstr(response, "+CMQTTACCQ: 0,19") != nullptr) {
+            _logger.info(logging::TAG_MQTT, "client MQTT deja alloue (+CMQTTACCQ: 0,19)");
+            _clientAcquired = true;
+        } else {
+            _logger.error(logging::TAG_MQTT, "CMQTTACCQ echoue: %s", response);
+            releaseResources();
+            return false;
+        }
+    } else {
+        _clientAcquired = true;
     }
-    _clientAcquired = true;
 
     _logger.info(logging::TAG_MQTT, "association contexte TLS MQTT");
     if (!_modem.sendCommand(modem_mqtt::Commands::ASSIGN_TLS_CONTEXT, response,
@@ -225,6 +243,23 @@ void CellularMqttClient::releaseResources()
     _connected = false;
     _clientAcquired = false;
     _serviceStarted = false;
+}
+
+void CellularMqttClient::resetModemMqttStack()
+{
+    char response[128]{};
+    char command[64]{};
+
+    // 1. Deconnecter le client index 0 s'il etait connecte (timeout valide SIM7600: 60..180s)
+    std::snprintf(command, sizeof(command), modem_mqtt::Commands::DISCONNECT,
+                  modem_mqtt::Commands::PUBLISH_TIMEOUT_SECONDS);
+    _modem.sendCommand(command, response, sizeof(response), 3000U);
+
+    // 2. Liberer le client index 0
+    _modem.sendCommand(modem_mqtt::Commands::RELEASE_CLIENT, response, sizeof(response), 2000U);
+
+    // 3. Arreter le service MQTT
+    _modem.sendCommand(modem_mqtt::Commands::STOP, response, sizeof(response), 3000U);
 }
 
 }  // namespace middleware

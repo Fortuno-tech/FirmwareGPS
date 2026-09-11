@@ -22,6 +22,7 @@ private:
     void logMqttFailure(const char* step, const char* response,
                         const char* urcPrefix) const;
     void releaseResources();
+    void resetModemMqttStack();
 
     drivers::Sim7600Driver& _modem;
 	core::Logger& _logger;

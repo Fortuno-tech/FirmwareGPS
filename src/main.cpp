@@ -47,6 +47,8 @@
 #include "services/gps/gps_service.h"
 #include "services/security/provisioning_service.h"
 #include "services/security/ota_key_store.h"
+#include "config/pin_config.h"
+#include "config/hardware_config.h"
 
 namespace {
 
@@ -143,12 +145,12 @@ bool g_started = false;
 void handleSerialProvisioning(fortico::services::ProvisioningService& provisioningService)
 {
     const bool alreadyProvisioned = provisioningService.isProvisioned();
-    const uint32_t timeoutMs = alreadyProvisioned ? 3000U : 30000U;
+    const uint32_t timeoutMs = alreadyProvisioned ? 5000U : 30000U;
 
     if (!alreadyProvisioned) {
         Serial.println(F("[PROV] Device unprovisioned. Waiting 30s for PROV payload on Serial..."));
     } else {
-        Serial.println(F("[PROV] Device provisioned. Waiting 3s for serial commands..."));
+        Serial.println(F("[PROV] Device provisioned. Waiting 5s for serial commands..."));
     }
     Serial.println(F("PROV:READY"));
 
@@ -177,6 +179,9 @@ void handleSerialProvisioning(fortico::services::ProvisioningService& provisioni
                             String sizeStr = line.substring(10, sepIdx);
                             String base64Str = line.substring(sepIdx + 1);
                             size_t expectedSize = static_cast<size_t>(sizeStr.toInt());
+                            Serial.printf("[PROV] Received CERT: expSize=%u, b64Len=%u\n",
+                                          static_cast<unsigned int>(expectedSize),
+                                          static_cast<unsigned int>(base64Str.length()));
                             if (provisioningService.installModemCertificate("hivemq-ca.pem", expectedSize, base64Str.c_str())) {
                                 Serial.println(F("PROV:CERT:OK"));
                             } else {
@@ -233,6 +238,7 @@ void handleSerialProvisioning(fortico::services::ProvisioningService& provisioni
 
 void setup()
 {
+    Serial.setRxBufferSize(4096);
     Serial.begin(115200);
     g_delayHal.waitMs(250U);
 
@@ -243,6 +249,27 @@ void setup()
     }
     g_logger.info(fortico::logging::TAG_SYSTEM_CONTROLLER,
                   "console de diagnostic active");
+
+    uint8_t i2cScanAddrs[16] = {};
+    size_t i2cScanCount = 0;
+    if (g_i2cHal.init(fortico::pins::I2C_SDA, fortico::pins::I2C_SCL, fortico::hardware::I2C_FREQUENCY_HZ)) {
+        if (g_i2cHal.scan(i2cScanAddrs, sizeof(i2cScanAddrs), &i2cScanCount)) {
+            Serial.printf("[I2C] Scan bus (SDA=%d, SCL=%d) : %u peripherique(s) detecte(s)\n",
+                          fortico::pins::I2C_SDA, fortico::pins::I2C_SCL, static_cast<unsigned int>(i2cScanCount));
+            for (size_t i = 0; i < i2cScanCount; ++i) {
+                if (i2cScanAddrs[i] == 0x68) {
+                    Serial.println(F("[I2C]  -> 0x68 : RTC DS3231 [OK]"));
+                } else if (i2cScanAddrs[i] == 0x24) {
+                    Serial.println(F("[I2C]  -> 0x24 : RFID PN532 [OK]"));
+                } else {
+                    Serial.printf("[I2C]  -> 0x%02X : Peripherique detecte\n", i2cScanAddrs[i]);
+                }
+            }
+            if (i2cScanCount == 0) {
+                Serial.println(F("[I2C][WARN] Aucun composant detecte sur le bus I2C ! Verifiez le cablage et les pull-ups."));
+            }
+        }
+    }
 
     if (g_nvsDriver.init() != fortico::constants::ErrorCode::OK) {
 		g_logger.error(fortico::logging::TAG_SYSTEM_CONTROLLER,

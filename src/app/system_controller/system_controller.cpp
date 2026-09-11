@@ -1,6 +1,8 @@
 #include "app/system_controller/system_controller.hpp"
 
+#include "config/hardware_config.h"
 #include "config/network_config.h"
+#include "utils/timer_utils.h"
 
 namespace fortico {
 namespace app {
@@ -36,7 +38,10 @@ SystemController::SystemController(
 	  _relayManager(relayManager), _fuelDriver(fuelDriver),
 	  _fuelManager(fuelManager), _rtcDriver(rtcDriver), _sdDriver(sdDriver),
 	  _mqttClient(mqttClient),
-	  _initialized(false), _running(false), _bootStage(BootStage::Idle)
+	  _initialized(false), _running(false), _bootStage(BootStage::Idle),
+	  _lastNetworkTimeSyncMs(0U), _lastRfidHealthy(false),
+	  _lastSdHealthy(false), _healthStateKnown(false), _lastHeartbeatMs(0U),
+	  _lastAuthenticationTimestamp(0U)
 {
 }
 
@@ -60,7 +65,12 @@ bool SystemController::init()
 		return failBoot("initialisation driver fuel ou RTC impossible",
 						constants::ErrorCode::UNKNOWN);
 	}
-	_sdDriver.init();
+	const constants::ErrorCode sdInitResult = _sdDriver.init();
+	if (sdInitResult != constants::ErrorCode::OK) {
+		_logger.warn(logging::TAG_SYSTEM_CONTROLLER,
+					 "initialisation SD echouee: code=%d",
+					 static_cast<int>(sdInitResult));
+	}
 	if (!_securityService.start()) {
 		return failBoot("initialisation stockage securise impossible",
 						constants::ErrorCode::NVS_READ_FAILED);
@@ -166,6 +176,8 @@ bool SystemController::start()
 		_telemetryService.stop();
 		return failBoot("demarrage RFID impossible", constants::ErrorCode::UNKNOWN);
 	}
+	_logger.info(logging::TAG_SYSTEM_CONTROLLER,
+				 "RfidTask demarrage demande");
 	if (!_eventBus.start()) {
 		_rfidService.stop();
 		_mqttClient.disconnect();
@@ -182,8 +194,13 @@ bool SystemController::start()
 		return failBoot("demarrage driver relais, fuel ou RTC impossible",
 						constants::ErrorCode::UNKNOWN);
 	}
-	_sdDriver.start();
+	const bool sdStarted = _sdDriver.start();
+	if (!sdStarted || !_sdDriver.isHealthy()) {
+		_logger.warn(logging::TAG_SYSTEM_CONTROLLER,
+					 "SD indisponible: le diagnostic peut declencher une alerte");
+	}
 	_running = true;
+	_lastNetworkTimeSyncMs = utils::Timer::millis();
 	setBootStage(BootStage::Ready, "Fortico operationnel");
 	return true;
 }
@@ -191,7 +208,57 @@ bool SystemController::start()
 void SystemController::update()
 {
 	if (!_running) return;
+	const uint64_t rfidStartMs = utils::Timer::millis();
 	_rfidService.update();
+	const types::AuthenticationDecision decision = _authenticationService.decision();
+	if (decision.timestamp != 0U &&
+		decision.timestamp != _lastAuthenticationTimestamp) {
+		const char* result = decision.result == types::AuthenticationResult::AUTHORIZED
+			? "autorise" : "refuse";
+		_logger.info(logging::TAG_SYSTEM_CONTROLLER,
+					 "badge RFID traite: uid=%s resultat=%s timestamp=%llu",
+					 decision.uid, result,
+					 static_cast<unsigned long long>(decision.timestamp));
+		_lastAuthenticationTimestamp = decision.timestamp;
+	}
+	const uint64_t rfidElapsedMs = utils::Timer::millis() - rfidStartMs;
+	const bool rfidHealthy = _rfidService.isRunning();
+	const bool sdHealthy = _sdDriver.isHealthy();
+	if (rfidElapsedMs >= 200U) {
+		_logger.warn(logging::TAG_SYSTEM_CONTROLLER,
+					 "cycle RFID lent: duree=%llu ms, sante=%s",
+					 static_cast<unsigned long long>(rfidElapsedMs),
+					 rfidHealthy ? "oui" : "non");
+	}
+	if (!_healthStateKnown || rfidHealthy != _lastRfidHealthy) {
+		_logger.info(logging::TAG_SYSTEM_CONTROLLER,
+					 "etat RFID: %s, cycle=%llu ms",
+					 rfidHealthy ? "sain" : "indisponible",
+					 static_cast<unsigned long long>(rfidElapsedMs));
+	}
+	if (!_healthStateKnown || sdHealthy != _lastSdHealthy) {
+		_logger.info(logging::TAG_SYSTEM_CONTROLLER,
+					 "etat SD: %s", sdHealthy ? "sain" : "indisponible");
+	}
+	_lastRfidHealthy = rfidHealthy;
+	_lastSdHealthy = sdHealthy;
+	_healthStateKnown = true;
+	if (utils::Timer::millis() - _lastHeartbeatMs >= 10000U) {
+		_logger.info(logging::TAG_SYSTEM_CONTROLLER,
+					 "heartbeat: controleur vivant, RFID=%s, SD=%s, cycles=%lu, uid=%lu, echecs=%lu",
+					 rfidHealthy ? "actif" : "indisponible",
+					 sdHealthy ? "sain" : "indisponible",
+					 static_cast<unsigned long>(_rfidService.updateCount()),
+					 static_cast<unsigned long>(_rfidService.uidCount()),
+					 static_cast<unsigned long>(_rfidService.readFailureCount()));
+		_lastHeartbeatMs = utils::Timer::millis();
+	}
+	const uint64_t nowMs = utils::Timer::millis();
+	if (nowMs - _lastNetworkTimeSyncMs >=
+		hardware::NETWORK_TIME_SYNC_INTERVAL_MS) {
+		synchronizeRtcFromNetwork();
+		_lastNetworkTimeSyncMs = nowMs;
+	}
 	_alertManager.update();
 	_alertManager.process();
 	_powerMonitor.update();
@@ -264,6 +331,24 @@ void SystemController::logSim7600Diagnostics()
 	if (!complete) {
 		_logger.warn(logging::TAG_SIM7600,
 					 "diagnostic partiel: verifier SIM, antenne et enregistrement reseau");
+	}
+}
+
+void SystemController::synchronizeRtcFromNetwork()
+{
+	if (!_sim7600Service.isDataConnected()) return;
+	drivers::RtcDateTime networkTime{};
+	if (!_sim7600Service.getNetworkDateTime(networkTime)) {
+		_logger.warn(logging::TAG_SYSTEM_CONTROLLER,
+					 "synchronisation RTC depuis le reseau impossible");
+		return;
+	}
+	if (_rtcDriver.setDateTime(networkTime)) {
+		_logger.info(logging::TAG_SYSTEM_CONTROLLER,
+					 "RTC synchronisee depuis l'heure reseau");
+	} else {
+		_logger.warn(logging::TAG_SYSTEM_CONTROLLER,
+					 "ecriture de l'heure reseau dans le RTC impossible");
 	}
 }
 

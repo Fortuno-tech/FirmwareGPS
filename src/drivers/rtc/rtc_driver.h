@@ -40,6 +40,7 @@ private:
 	bool _initialized;
 	bool _healthy;
 	bool _active;
+	uint64_t _lastPollMs;
 };
 
 }  // namespace drivers

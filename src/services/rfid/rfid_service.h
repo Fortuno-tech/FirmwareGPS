@@ -12,29 +12,70 @@ namespace services {
 
 class RfidService : public interfaces::IService {
 public:
-    RfidService(interfaces::IRfidDriver& driver,
-                AuthenticationService& authentication,
-                interfaces::IPublisher& publisher);
+
+    RfidService(
+        interfaces::IRfidDriver& driver,
+        AuthenticationService& authentication,
+        interfaces::IPublisher& publisher);
 
     bool start() override;
     void stop() override;
     bool isRunning() const override;
+
     void update();
 
+    uint32_t updateCount() const;
+    uint32_t uidCount() const;
+    uint32_t readFailureCount() const;
+
 private:
+
     interfaces::IRfidDriver& _driver;
     AuthenticationService& _authentication;
     interfaces::IPublisher& _publisher;
+
     bool _running;
+
+    /*
+     * Dernier UID connu.
+     */
     uint8_t _lastUid[16];
     uint8_t _lastUidLength;
+
+    /*
+     * Indique si un badge est actuellement considéré
+     * comme présent.
+     */
     bool _cardPresent;
 
-    bool isSameUid(const uint8_t* uid, uint8_t length) const;
-    void rememberUid(const uint8_t* uid, uint8_t length);
+    uint32_t _nextPollMs;
+
+    uint32_t _updateCount;
+    uint32_t _uidCount;
+
+    /*
+     * Vraies erreurs de lecture.
+     *
+     * Une absence normale de badge ne sera plus
+     * comptée comme une erreur.
+     */
+    uint32_t _readFailureCount;
+
+    bool isSameUid(
+        const uint8_t* uid,
+        uint8_t length) const;
+
+    void rememberUid(
+        const uint8_t* uid,
+        uint8_t length);
+
     void clearUid();
-    static void formatUid(const uint8_t* uid, uint8_t length,
-                          char* output, uint8_t outputSize);
+
+    static void formatUid(
+        const uint8_t* uid,
+        uint8_t length,
+        char* output,
+        uint8_t outputSize);
 };
 
 }  // namespace services

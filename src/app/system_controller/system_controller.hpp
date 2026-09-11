@@ -107,10 +107,17 @@ private:
 	bool _initialized;
 	bool _running;
 	BootStage _bootStage;
+	uint64_t _lastNetworkTimeSyncMs;
+	bool _lastRfidHealthy;
+	bool _lastSdHealthy;
+	bool _healthStateKnown;
+	uint64_t _lastHeartbeatMs;
+	uint64_t _lastAuthenticationTimestamp;
 
 	void setBootStage(BootStage stage, const char* message);
 	bool failBoot(const char* message, constants::ErrorCode error);
 	void logSim7600Diagnostics();
+	void synchronizeRtcFromNetwork();
 };
 
 }  // namespace app

@@ -32,6 +32,8 @@ public:
     bool connectInternet(const char* apn, uint32_t timeoutMs);
     bool runDiagnostics(Sim7600Diagnostics& diagnostics);
     bool getIpAddress(char* ipAddress, std::size_t ipAddressSize);
+    bool isDataConnected() const;
+    bool getNetworkDateTime(drivers::RtcDateTime& dateTime);
 
 private:
     drivers::Sim7600Driver& _driver;
