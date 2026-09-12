@@ -229,8 +229,14 @@ void SystemController::update()
 {
 	if (!_running) return;
 	const uint64_t updateStartMs = utils::Timer::millis();
-	Serial.printf("[PERF][SYSTEM] update START t=%llu\n",
-				  static_cast<unsigned long long>(updateStartMs));
+	if (logging::ENABLE_HOT_PATH_PERF_LOGS) {
+		Serial.printf("[PERF][SYSTEM] update START t=%llu\n",
+					  static_cast<unsigned long long>(updateStartMs));
+	}
+	if (logging::ENABLE_HOT_PATH_PERF_LOGS) {
+		Serial.printf("[PERF][SYSTEM] update END duration=%llu\n",
+					  static_cast<unsigned long long>(utils::Timer::millis() - updateStartMs));
+	}
 
 	_gpsService.update();
 	logGpsPosition();

@@ -4,6 +4,7 @@
 #include <cstring>
 
 #include "config/hardware_config.h"
+#include "config/logging_config.h"
 #include "config/pin_config.h"
 #include "config/task_config.h"
 
@@ -687,9 +688,10 @@ bool RfidDriver::readUid(
 {
     uidLength = 0U;
     const uint64_t readStartMs = millis();
-    Serial.printf("[PERF][RFID] readUid START t=%llu\n",
-              static_cast<unsigned long long>(readStartMs));
-
+    if (logging::ENABLE_HOT_PATH_PERF_LOGS) {
+        Serial.printf("[PERF][RFID] readUid START t=%llu\n",
+                  static_cast<unsigned long long>(readStartMs));
+    }
     if (!_initialized ||
         !_active ||
         !_healthy ||
@@ -719,10 +721,12 @@ bool RfidDriver::readUid(
     _i2cHal.unlock();
 
     const bool available = result && uidLength > 0U && uidLength <= 16U;
-    Serial.printf("[PERF][RFID] readUid END duration=%llu result=%s uidLength=%u\n",
-              static_cast<unsigned long long>(millis() - readStartMs),
-              available ? "true" : "false",
-              static_cast<unsigned int>(uidLength));
+    if (logging::ENABLE_HOT_PATH_PERF_LOGS) {
+        Serial.printf("[PERF][RFID] readUid END duration=%llu result=%s uidLength=%u\n",
+                  static_cast<unsigned long long>(millis() - readStartMs),
+                  available ? "true" : "false",
+                  static_cast<unsigned int>(uidLength));
+    }
     return available;
 
 #else

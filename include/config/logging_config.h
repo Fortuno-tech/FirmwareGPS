@@ -39,6 +39,10 @@ constexpr Level PRODUCTION_MIN_LEVEL = Level::LOG_WARN;
 /// Niveau de log minimal émis vers la console série en développement
 constexpr Level DEVELOPMENT_MIN_LEVEL = Level::LOG_DEBUG;
 
+/// Traces tres frequentes des boucles SYSTEM/RFID/RTC. Desactivees par defaut
+/// pour garder le moniteur lisible; les erreurs et evenements restent actifs.
+constexpr bool ENABLE_HOT_PATH_PERF_LOGS = false;
+
 // ============================================================================
 // 2. Tags par module — cohérence avec la table des tâches (task_config.h)
 // ============================================================================
