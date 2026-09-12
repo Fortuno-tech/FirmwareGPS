@@ -181,7 +181,7 @@ bool CellularMqttClient::publish(const char* topic, const void* payload,
                                  std::size_t length)
 {
     const uint64_t publishStartMs = utils::Timer::millis();
-    _logger.info(logging::TAG_MQTT, "[PERF][MQTT] Cellular publish START t=%llu",
+    _logger.info(logging::TAG_MQTT, "[PERF][MQTT_MODEM] publish START t=%llu",
                  static_cast<unsigned long long>(publishStartMs));
     if (!_connected || !_modem.isHealthy() || topic == nullptr ||
         payload == nullptr || length == 0U) {
@@ -255,7 +255,7 @@ bool CellularMqttClient::publish(const char* topic, const void* payload,
                      response, published ? "true" : "false");
     _logger.info(logging::TAG_MQTT, "[MQTT][AT] CMQTTPUB END result=%s",
                  published ? "true" : "false");
-    _logger.info(logging::TAG_MQTT, "[PERF][MQTT] Cellular publish END duration=%llu result=%s",
+    _logger.info(logging::TAG_MQTT, "[PERF][MQTT_MODEM] publish END duration=%llu result=%s",
                  static_cast<unsigned long long>(utils::Timer::millis() - publishStartMs),
                  published ? "true" : "false");
     if (!published) logMqttFailure("CMQTTPUB", response, "+CMQTTPUB:");

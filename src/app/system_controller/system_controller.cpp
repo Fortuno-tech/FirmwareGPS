@@ -45,7 +45,8 @@ SystemController::SystemController(
 	  _lastSdHealthy(false), _healthStateKnown(false), _lastHeartbeatMs(0U),
 	  _lastAuthenticationTimestamp(0U), _lastGpsLogMs(0U),
 	  _lastAlertTimestamp(0U), _lastAlertCode(types::AlertCode::DIAGNOSTIC_WARNING),
-	  _hasProcessedAlert(false), _lastBatteryLogMs(0U)
+	  _hasProcessedAlert(false), _lastBatteryLogMs(0U), _lastStatusPublishMs(0U),
+	  _lastPublishedRelayState(types::RelayState::LOCKED), _relayStateKnown(false)
 {
 }
 
@@ -158,6 +159,7 @@ bool SystemController::start()
 	// Les vérifications suivantes sont faites périodiquement dans update().
 	synchronizeRtcFromNetwork();
 	_lastNetworkTimeSyncMs = utils::Timer::millis();
+	_lastStatusPublishMs = 0U;
 	logSim7600Diagnostics();
 	setBootStage(BootStage::ConnectingMqtt, "connexion MQTT cellulaire");
 	types::MqttCredentials credentials{};
@@ -246,6 +248,10 @@ void SystemController::update()
 		decision.timestamp != _lastAuthenticationTimestamp) {
 		_lastAuthenticationTimestamp = decision.timestamp;
 		const bool isAuthorized = (decision.result == types::AuthenticationResult::AUTHORIZED);
+		drivers::RtcDateTime rfidEventTime{};
+		const bool rfidTimeValid = _rtcDriver.readDateTime(rfidEventTime);
+		_telemetryService.publishRfid(
+			decision.uid, isAuthorized, rfidTimeValid ? &rfidEventTime : nullptr);
 
 		if (isAuthorized) {
 			// Badge vérifié avec succès : moteur autorisé par le relais et passage à l'étape de suivi actif
@@ -305,6 +311,14 @@ void SystemController::update()
 					 static_cast<unsigned long>(_rfidService.readFailureCount()));
 		_lastHeartbeatMs = utils::Timer::millis();
 	}
+	const uint64_t statusNowMs = utils::Timer::millis();
+	if (_lastStatusPublishMs == 0U ||
+		statusNowMs - _lastStatusPublishMs >= 60000U) {
+		_telemetryService.publishStatus(
+			_mqttClient.connected(), _sim7600Service.isRunning(),
+			_gpsService.isRunning(), _sdDriver.isHealthy());
+		_lastStatusPublishMs = statusNowMs;
+	}
 
 	const uint64_t nowMs = utils::Timer::millis();
 	if (nowMs - _lastNetworkTimeSyncMs >=
@@ -323,6 +337,13 @@ void SystemController::update()
 
 	_relayManager.update();
 	_relayManager.process();
+	const types::RelayState relayState = _relayManager.state();
+	if (!_relayStateKnown || relayState != _lastPublishedRelayState) {
+		_telemetryService.publishEngine(
+			relayState, _telemetryService.isActiveTracking());
+		_lastPublishedRelayState = relayState;
+		_relayStateKnown = true;
+	}
 
 	_fuelManager.update();
 	_fuelManager.process();
@@ -345,6 +366,7 @@ void SystemController::processAlerts()
 		_hasProcessedAlert = true;
 		_lastAlertTimestamp = alert.timestamp;
 		_lastAlertCode = alert.code;
+		_telemetryService.publishAlarm(alert);
 		const char* alertName = "INCONNU";
 		switch (alert.code) {
 			case types::AlertCode::AUTH_DENIED: alertName = "BADGE_NON_AUTORISE"; break;

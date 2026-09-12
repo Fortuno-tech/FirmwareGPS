@@ -101,9 +101,6 @@ constexpr uint16_t MQTT_BROKER_PORT = 8883;
 /// Intervalle keepalive MQTT (PINGREQ/PINGRESP)
 constexpr uint16_t MQTT_KEEPALIVE_INTERVAL_S = 60;
 
-/// Préfixe de l'identifiant client MQTT, complété par device_id à l'exécution
-constexpr const char* MQTT_CLIENT_ID_PREFIX = "FORTICO-";
-
 /// Taille maximale d'un payload JSON MQTT (garde-fou anti-dépassement)
 constexpr uint32_t MQTT_MAX_PAYLOAD_SIZE_BYTES = 2048;
 

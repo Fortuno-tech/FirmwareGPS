@@ -119,6 +119,9 @@ private:
 	types::AlertCode _lastAlertCode;
 	bool _hasProcessedAlert;
 	uint64_t _lastBatteryLogMs;
+	uint64_t _lastStatusPublishMs;
+	types::RelayState _lastPublishedRelayState;
+	bool _relayStateKnown;
 
 	void setBootStage(BootStage stage, const char* message);
 	bool failBoot(const char* message, constants::ErrorCode error);

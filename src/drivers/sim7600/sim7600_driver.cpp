@@ -2,6 +2,7 @@
 
 #include <cstring>
 #include <cstdio>
+#include <cctype>
 #ifdef ESP32_TARGET
 #include <Arduino.h>
 #endif
@@ -371,8 +372,15 @@ bool Sim7600Driver::getNetworkDateTime(RtcDateTime& dateTime)
 	unsigned int minute = 0U;
 	unsigned int second = 0U;
 	const char* timeText = std::strchr(response, '"');
-	if (timeText == nullptr || std::sscanf(timeText + 1, "%u/%u/%u,%u:%u:%u",
-					&year, &month, &day, &hour, &minute, &second) != 6) {
+	char timezoneSign = '\0';
+	unsigned int timezoneQuarters = 0U;
+	if (timeText == nullptr || std::sscanf(timeText + 1, "%u/%u/%u,%u:%u:%u%c%u",
+					&year, &month, &day, &hour, &minute, &second,
+					&timezoneSign, &timezoneQuarters) != 8 ||
+		(timezoneSign != '+' && timezoneSign != '-') || timezoneQuarters > 96U) {
+		#ifdef ESP32_TARGET
+		Serial.printf("[WARN][RTC] timestamp UTC indisponible: CCLK timezone absent/invalide response=%s\n", response);
+		#endif
 		return false;
 	}
 	RtcDateTime value{
@@ -384,6 +392,38 @@ bool Sim7600Driver::getNetworkDateTime(RtcDateTime& dateTime)
 		value.hour > 23U || value.minute > 59U || value.second > 59U) {
 		return false;
 	}
+	int offsetMinutes = static_cast<int>(timezoneQuarters) * 15;
+	if (timezoneSign == '-') offsetMinutes = -offsetMinutes;
+	int totalMinutes = static_cast<int>(value.hour) * 60 +
+		static_cast<int>(value.minute) - offsetMinutes;
+	while (totalMinutes < 0) {
+		totalMinutes += 1440;
+		if (value.day > 1U) {
+			--value.day;
+		} else {
+			if (value.month == 1U) { value.month = 12U; --value.year; }
+			else { --value.month; }
+			const bool leap = (value.year % 4U == 0U && value.year % 100U != 0U) ||
+				(value.year % 400U == 0U);
+			static constexpr uint8_t days[] =
+				{31U, 28U, 31U, 30U, 31U, 30U, 31U, 31U, 30U, 31U, 30U, 31U};
+			value.day = days[value.month - 1U] +
+				((value.month == 2U && leap) ? 1U : 0U);
+		}
+	}
+	while (totalMinutes >= 1440) {
+		totalMinutes -= 1440;
+		static constexpr uint8_t days[] =
+			{31U, 28U, 31U, 30U, 31U, 30U, 31U, 31U, 30U, 31U, 30U, 31U};
+		const bool leap = (value.year % 4U == 0U && value.year % 100U != 0U) ||
+			(value.year % 400U == 0U);
+		const uint8_t monthDays = days[value.month - 1U] +
+			((value.month == 2U && leap) ? 1U : 0U);
+		if (value.day < monthDays) ++value.day;
+		else { value.day = 1U; if (value.month == 12U) { value.month = 1U; ++value.year; } else ++value.month; }
+	}
+	value.hour = static_cast<uint8_t>(totalMinutes / 60);
+	value.minute = static_cast<uint8_t>(totalMinutes % 60);
 	dateTime = value;
 	return true;
 }
