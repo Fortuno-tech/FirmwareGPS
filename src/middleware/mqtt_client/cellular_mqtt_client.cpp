@@ -247,11 +247,14 @@ bool CellularMqttClient::publish(const char* topic, const void* payload,
     std::snprintf(command, sizeof(command), modem_mqtt::Commands::PUBLISH,
                   modem_mqtt::Commands::PUBLISH_QOS,
                   modem_mqtt::Commands::PUBLISH_TIMEOUT_SECONDS);
+    _logger.info(logging::TAG_MQTT, "[MQTT][AT] CMQTTPUB START command=%s", command);
     const bool published = _modem.sendMqttCommand(command, "+CMQTTPUB: 0,0",
                                                    response, sizeof(response),
                                                    60000U);
     _logger.info(logging::TAG_MQTT, "[MQTT][AT] CMQTTPUB RESULT response=%s result=%s",
                      response, published ? "true" : "false");
+    _logger.info(logging::TAG_MQTT, "[MQTT][AT] CMQTTPUB END result=%s",
+                 published ? "true" : "false");
     _logger.info(logging::TAG_MQTT, "[PERF][MQTT] Cellular publish END duration=%llu result=%s",
                  static_cast<unsigned long long>(utils::Timer::millis() - publishStartMs),
                  published ? "true" : "false");
@@ -287,12 +290,15 @@ void CellularMqttClient::logMqttFailure(const char* step, const char* response,
                 result[length] = urc[length];
                 ++length;
             }
-            _logger.error(logging::TAG_MQTT, "%s echoue: %s", step, result);
+            _logger.error(logging::TAG_MQTT, "[MQTT][ERROR] publish failed step=%s", step);
+            _logger.error(logging::TAG_MQTT, "[MQTT][ERROR] modem response=%s", result);
             return;
         }
     }
-    _logger.error(logging::TAG_MQTT, "%s echoue: URC final absent ou ERROR AT",
+    _logger.error(logging::TAG_MQTT, "[MQTT][ERROR] publish failed step=%s",
                   step != nullptr ? step : "MQTT");
+    _logger.error(logging::TAG_MQTT, "[MQTT][ERROR] modem response=%s",
+                  response != nullptr ? response : "<null>");
 }
 
 void CellularMqttClient::releaseResources()
