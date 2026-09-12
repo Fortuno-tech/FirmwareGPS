@@ -399,7 +399,21 @@ void setup()
     }
     handleSerialProvisioning(provisioningService, g_storageService);
 
-    g_securityService.start();
+    if (!g_securityService.start()) {
+        g_logger.error(fortico::logging::TAG_SYSTEM_CONTROLLER,
+                       "chargement securite provisionnee impossible");
+        return;
+    }
+
+    char provisionedDeviceId[sizeof(g_deviceId)]{};
+    if (g_securityService.loadDeviceId(provisionedDeviceId,
+                                       sizeof(provisionedDeviceId)) &&
+        provisionedDeviceId[0] != '\0') {
+        std::strncpy(g_deviceId, provisionedDeviceId, sizeof(g_deviceId) - 1U);
+        g_deviceId[sizeof(g_deviceId) - 1U] = '\0';
+        g_telemetryService.setIdentity(g_deviceId,
+                                       fortico::mqtt_identity::VEHICLE_ID);
+    }
 
     uint8_t otaPubKey[32] = {};
     fortico::services::OtaKeyStore otaKeyStore(g_nvsDriver);
