@@ -38,6 +38,8 @@ public:
 	void setRelay(types::RelayState relay);
 	void setAuthentication(types::AuthenticationResult result);
 	void setFuel(const types::FuelLevel& fuel);
+	void setIdentity(const char* deviceId, const char* vehicleId);
+	void setTimestampIso(const char* timestampIso);
 
 private:
 	managers::TelemetryManager& _manager;
@@ -46,6 +48,9 @@ private:
 	char _payload[1024];
 	bool _running;
 	uint32_t _publishIntervalMs;
+	char _deviceId[32];
+	char _vehicleId[32];
+	char _timestampIso[32];
 	uint64_t _lastPublishMs;
 	bool _activeTracking;
 };

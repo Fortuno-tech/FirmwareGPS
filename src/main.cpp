@@ -53,6 +53,8 @@
 #include "services/security/ota_key_store.h"
 #include "config/pin_config.h"
 #include "config/hardware_config.h"
+#include "config/mqtt_identity.h"
+#include "config/mqtt_topics.h"
 #include "config/security_config.h"
 
 namespace {
@@ -99,6 +101,8 @@ fortico::services::SdLogSink g_sdLogSink(g_sdDriver);
 fortico::core::CompositeLogSink g_logSink(g_serialLogSink, g_sdLogSink);
 fortico::core::Logger g_logger;
 fortico::middleware::CellularMqttClient g_mqttClient(g_sim7600, g_logger);
+char g_deviceId[32] = {};
+char g_telemetryTopic[96] = {};
 fortico::services::SecurityService g_securityService(g_nvsDriver);
 fortico::services::StorageService g_storageService(
     g_nvsDriver, g_securityService, &g_sdDriver);
@@ -117,7 +121,7 @@ fortico::services::DiagnosticsService g_diagnosticsService(
     g_diagnosticsManager, g_diagnostics, &g_eventBus);
 fortico::managers::TelemetryManager g_telemetryManager(g_battery, &g_eventBus);
 fortico::services::MqttTelemetrySink g_telemetrySink(
-    g_mqttClient, "fortico/telemetry");
+    g_mqttClient, g_telemetryTopic);
 fortico::services::TelemetryService g_telemetryService(
     g_telemetryManager, &g_telemetrySink, &g_gpsService);
 fortico::app::Application g_application(
@@ -326,6 +330,16 @@ void setup()
     Serial.setRxBufferSize(4096);
     Serial.begin(115200);
     g_delayHal.waitMs(250U);
+
+    const uint64_t mac = ESP.getEfuseMac();
+    std::snprintf(g_deviceId, sizeof(g_deviceId), "%s_%03lX",
+                  fortico::mqtt_identity::DEVICE_ID_PREFIX,
+                  static_cast<unsigned long>(mac & 0xFFFULL));
+    std::snprintf(g_telemetryTopic, sizeof(g_telemetryTopic),
+                  fortico::topics::TELEMETRY,
+                  fortico::mqtt_identity::VEHICLE_ID);
+    g_telemetryService.setIdentity(g_deviceId,
+                                   fortico::mqtt_identity::VEHICLE_ID);
 
     if (!g_logger.init(fortico::logging::DEVELOPMENT_MIN_LEVEL,
                        &g_logSink) || !g_logger.start()) {

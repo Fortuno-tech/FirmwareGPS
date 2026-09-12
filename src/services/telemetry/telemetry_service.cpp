@@ -12,8 +12,10 @@ TelemetryService::TelemetryService(managers::TelemetryManager& manager,
 								   ITelemetrySink* sink,
 								   const GpsService* gpsService)
 	: _manager(manager), _sink(sink), _gpsService(gpsService), _payload{},
-	  _running(false), _publishIntervalMs(5000U), _lastPublishMs(0U),
-	  _activeTracking(false) {}
+	  _running(false), _publishIntervalMs(5000U), _deviceId{}, _vehicleId{},
+	  _timestampIso{}, _lastPublishMs(0U), _activeTracking(false) {
+	std::strncpy(_timestampIso, "1970-01-01T00:00:00Z", sizeof(_timestampIso) - 1U);
+}
 
 bool TelemetryService::start()
 {
@@ -51,7 +53,8 @@ bool TelemetryService::forcePublish()
 	if (!_running) return false;
 	if (_gpsService != nullptr) _manager.setGps(_gpsService->data());
 	_manager.update();
-	if (!PayloadBuilder::telemetry(_manager.packet(), _payload, sizeof(_payload))) return false;
+	if (!PayloadBuilder::telemetry(_manager.packet(), _deviceId, _vehicleId,
+								_timestampIso, _payload, sizeof(_payload))) return false;
 	if (_sink != nullptr) {
 		const bool published = _sink->publish(_payload, std::strlen(_payload));
 		if (published) {
@@ -77,6 +80,21 @@ void TelemetryService::setFuel(const types::FuelLevel& fuel)
 	_manager.setFuel(fuel);
 }
 
+void TelemetryService::setIdentity(const char* deviceId, const char* vehicleId)
+{
+	if (deviceId != nullptr) std::strncpy(_deviceId, deviceId, sizeof(_deviceId) - 1U);
+	if (vehicleId != nullptr) std::strncpy(_vehicleId, vehicleId, sizeof(_vehicleId) - 1U);
+	_deviceId[sizeof(_deviceId) - 1U] = '\0';
+	_vehicleId[sizeof(_vehicleId) - 1U] = '\0';
+}
+
+void TelemetryService::setTimestampIso(const char* timestampIso)
+{
+	if (timestampIso == nullptr) return;
+	std::strncpy(_timestampIso, timestampIso, sizeof(_timestampIso) - 1U);
+	_timestampIso[sizeof(_timestampIso) - 1U] = '\0';
+}
+
 void TelemetryService::update()
 {
 	if (!_running) return;
@@ -89,7 +107,8 @@ void TelemetryService::update()
 	const uint64_t nowMs = utils::Timer::millis();
 	if (nowMs - _lastPublishMs < _publishIntervalMs) return;
 
-	if (!PayloadBuilder::telemetry(_manager.packet(), _payload, sizeof(_payload))) return;
+	if (!PayloadBuilder::telemetry(_manager.packet(), _deviceId, _vehicleId,
+								_timestampIso, _payload, sizeof(_payload))) return;
 	if (_sink != nullptr) {
 		if (_sink->publish(_payload, std::strlen(_payload))) {
 			_lastPublishMs = nowMs;

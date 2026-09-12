@@ -1,5 +1,7 @@
 #include "app/system_controller/system_controller.hpp"
 
+#include <cstdio>
+
 #include "config/hardware_config.h"
 #include "config/network_config.h"
 #include "utils/timer_utils.h"
@@ -43,7 +45,8 @@ SystemController::SystemController(
 	  _lastSdHealthy(false), _healthStateKnown(false), _lastHeartbeatMs(0U),
 	  _lastAuthenticationTimestamp(0U), _lastGpsLogMs(0U),
 	  _lastAlertTimestamp(0U), _lastAlertCode(types::AlertCode::DIAGNOSTIC_WARNING),
-	  _hasProcessedAlert(false), _lastBatteryLogMs(0U)
+	  _hasProcessedAlert(false), _lastBatteryLogMs(0U),
+	  _lastTelemetryTimestampMs(0U)
 {
 }
 
@@ -224,6 +227,23 @@ bool SystemController::start()
 void SystemController::update()
 {
 	if (!_running) return;
+	const uint64_t timestampNowMs = utils::Timer::millis();
+	if (timestampNowMs - _lastTelemetryTimestampMs >= 1000U) {
+		drivers::RtcDateTime rtcTime{};
+		if (_rtcDriver.readDateTime(rtcTime)) {
+			char timestampIso[32]{};
+			std::snprintf(timestampIso, sizeof(timestampIso),
+						  "%04u-%02u-%02uT%02u:%02u:%02uZ",
+						  static_cast<unsigned int>(rtcTime.year),
+						  static_cast<unsigned int>(rtcTime.month),
+						  static_cast<unsigned int>(rtcTime.day),
+						  static_cast<unsigned int>(rtcTime.hour),
+						  static_cast<unsigned int>(rtcTime.minute),
+						  static_cast<unsigned int>(rtcTime.second));
+			_telemetryService.setTimestampIso(timestampIso);
+		}
+		_lastTelemetryTimestampMs = timestampNowMs;
+	}
 
 	_gpsService.update();
 	logGpsPosition();

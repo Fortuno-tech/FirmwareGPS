@@ -10,7 +10,9 @@ namespace services {
 class PayloadBuilder {
 public:
 	static bool telemetry(const types::TelemetryPacket& packet,
-						  char* output, std::size_t outputSize);
+						  const char* deviceId, const char* vehicleId,
+						  const char* timestampIso, char* output,
+						  std::size_t outputSize);
 };
 
 }  // namespace services
