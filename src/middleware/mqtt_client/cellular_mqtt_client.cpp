@@ -165,24 +165,49 @@ bool CellularMqttClient::connect(const char* host, uint16_t port)
 bool CellularMqttClient::publish(const char* topic, const void* payload,
                                  std::size_t length)
 {
-    if (!_connected || topic == nullptr || payload == nullptr || length == 0U)
+    if (!_connected || topic == nullptr || payload == nullptr || length == 0U) {
+        _logger.warn(logging::TAG_MQTT,
+                     "publication telemetry refusee: client non connecte ou donnees invalides");
         return false;
+    }
     const std::size_t topicLength = std::strlen(topic);
-    if (topicLength == 0U || topicLength > 1024U || length > 10240U) return false;
+    if (topicLength == 0U || topicLength > 1024U || length > 10240U) {
+        _logger.warn(logging::TAG_MQTT,
+                     "publication telemetry refusee: topic/taille invalide topicLen=%u payloadLen=%u",
+                     static_cast<unsigned int>(topicLength),
+                     static_cast<unsigned int>(length));
+        return false;
+    }
     char response[128]{};
     char command[64]{};
     std::snprintf(command, sizeof(command),
                   modem_mqtt::Commands::SET_TOPIC_LENGTH,
                   static_cast<unsigned int>(topicLength));
-    if (!_modem.beginMqttInput(command, response, sizeof(response), 2000U)) return false;
+    if (!_modem.beginMqttInput(command, response, sizeof(response), 2000U)) {
+        _logger.error(logging::TAG_MQTT, "publication telemetry echouee: saisie topic MQTT");
+        return false;
+    }
     if (!_modem.writeRaw(reinterpret_cast<const uint8_t*>(topic),
-                         topicLength, response, sizeof(response), 2000U)) return false;
+                         topicLength, response, sizeof(response), 2000U)) {
+        _logger.error(logging::TAG_MQTT,
+                      "publication telemetry echouee: envoi topic MQTT reponse=%s",
+                      response);
+        return false;
+    }
     std::snprintf(command, sizeof(command),
                   modem_mqtt::Commands::SET_PAYLOAD_LENGTH,
                   static_cast<unsigned int>(length));
-    if (!_modem.beginMqttInput(command, response, sizeof(response), 2000U)) return false;
+    if (!_modem.beginMqttInput(command, response, sizeof(response), 2000U)) {
+        _logger.error(logging::TAG_MQTT, "publication telemetry echouee: saisie payload MQTT");
+        return false;
+    }
     if (!_modem.writeRaw(static_cast<const uint8_t*>(payload), length,
-                         response, sizeof(response), 5000U)) return false;
+                         response, sizeof(response), 5000U)) {
+        _logger.error(logging::TAG_MQTT,
+                      "publication telemetry echouee: envoi payload MQTT taille=%u reponse=%s",
+                      static_cast<unsigned int>(length), response);
+        return false;
+    }
     std::snprintf(command, sizeof(command), modem_mqtt::Commands::PUBLISH,
                   modem_mqtt::Commands::PUBLISH_QOS,
                   modem_mqtt::Commands::PUBLISH_TIMEOUT_SECONDS);
@@ -190,6 +215,8 @@ bool CellularMqttClient::publish(const char* topic, const void* payload,
                                                    response, sizeof(response),
                                                    60000U);
     if (!published) logMqttFailure("CMQTTPUB", response, "+CMQTTPUB:");
+    else _logger.info(logging::TAG_MQTT, "publication telemetry OK: topic=%s taille=%u",
+                      topic, static_cast<unsigned int>(length));
     return published;
 }
 

@@ -153,20 +153,28 @@ bool Sim7600Driver::writeRaw(const uint8_t* data, std::size_t length,
 		response == nullptr || responseSize < 2U) return false;
 	response[0] = '\0';
 	if (_uartHal.write(data, length) != length) return false;
-	std::size_t received = 0U;
+	std::size_t stored = 0U;
+	char recent[8]{};
+	std::size_t recentLength = 0U;
 	const uint32_t startMs = utils::Timer::millis();
-	while (utils::Timer::millis() - startMs < timeoutMs &&
-		   received + 1U < responseSize) {
+	while (utils::Timer::millis() - startMs < timeoutMs) {
 		uint8_t byte = 0U;
 		if (_uartHal.read(&byte, 1U, 1U) == 0U) {
 			_delayHal.waitMs(1U);
 			continue;
 		}
-		response[received++] = static_cast<char>(byte);
-		response[received] = '\0';
-		if (std::strstr(response, "\nOK") != nullptr) return true;
-		if (std::strstr(response, "\r\nERROR") != nullptr ||
-			std::strstr(response, "\nERROR") != nullptr) return false;
+		if (stored + 1U < responseSize) {
+			response[stored++] = static_cast<char>(byte);
+			response[stored] = '\0';
+		}
+		if (recentLength + 1U >= sizeof(recent)) {
+			std::memmove(recent, recent + 1U, sizeof(recent) - 2U);
+			recentLength = sizeof(recent) - 2U;
+		}
+		recent[recentLength++] = static_cast<char>(byte);
+		recent[recentLength] = '\0';
+		if (std::strstr(recent, "OK") != nullptr) return true;
+		if (std::strstr(recent, "ERROR") != nullptr) return false;
 	}
 	return false;
 }

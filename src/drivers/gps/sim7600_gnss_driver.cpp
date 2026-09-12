@@ -3,6 +3,10 @@
 #include <cstdlib>
 #include <cstring>
 
+#ifdef ESP32_TARGET
+#include <Arduino.h>
+#endif
+
 #include "config/hardware_config.h"
 #include "utils/default_values.h"
 #include "utils/timer_utils.h"
@@ -155,7 +159,13 @@ bool Sim7600GnssDriver::readPosition(types::GpsData& position)
         // poll() conserve l'etat de sante base sur la liaison modem.
         return false;
     }
-    return parseCgnssInfo(response, position);
+    const bool parsed = parseCgnssInfo(response, position);
+#ifdef ESP32_TARGET
+    if (!parsed) {
+        Serial.printf("[GPS][DBG] AT+CGNSSINFO non exploitable: %s\n", response);
+    }
+#endif
+    return parsed;
 }
 
 bool Sim7600GnssDriver::isGnssEnabled()
@@ -222,8 +232,10 @@ bool Sim7600GnssDriver::parseCgnssInfo(const char* response,
     float heading = 0.0F;
     float pdop = constants::INVALID_DOP;
     float hdop = constants::INVALID_DOP;
+    // Le SIM7600 laisse le cap vide lorsque le vehicule est immobile.
     if (!parseFloat(fields[10], altitude) || !parseFloat(fields[11], speedKnots) ||
-        !parseFloat(fields[12], heading) || !parseFloat(fields[13], pdop) ||
+        (fields[12][0] != '\0' && !parseFloat(fields[12], heading)) ||
+        !parseFloat(fields[13], pdop) ||
         !parseFloat(fields[14], hdop)) {
         return false;
     }
