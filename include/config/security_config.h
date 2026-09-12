@@ -45,6 +45,9 @@ constexpr const char* NVS_KEY_MQTT_CREDS = "mqtt_creds";
 /// Identifiant stable du boîtier utilisé comme clientId MQTT
 constexpr const char* NVS_KEY_DEVICE_ID = "device_id";
 
+/// Identifiant métier stable du véhicule utilisé dans les topics MQTT
+constexpr const char* NVS_KEY_VEHICLE_ID = "vehicle_id";
+
 /// Identifiants APN chiffrés
 constexpr const char* NVS_KEY_APN_CREDS = "apn_creds";
 

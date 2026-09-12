@@ -26,7 +26,7 @@ public:
     bool provisionRootKey(const uint8_t* key, std::size_t length);
     bool provision(const uint8_t* key, std::size_t keyLength,
                    const types::MqttCredentials& credentials,
-                   const char* deviceId);
+                   const char* deviceId, const char* vehicleId);
     bool hashBadge(const char* normalizedUid, uint8_t* digest,
                    std::size_t digestSize) const;
     bool encrypt(const uint8_t* plaintext, std::size_t plaintextSize,
@@ -41,6 +41,9 @@ public:
     bool loadMqttCredentials(types::MqttCredentials& credentials) const;
     bool storeDeviceId(const char* deviceId);
     bool loadDeviceId(char* deviceId, std::size_t size) const;
+    bool storeVehicleId(const char* vehicleId);
+    bool loadVehicleId(char* vehicleId, std::size_t size) const;
+    bool clearProvisioning();
 
 private:
     interfaces::INvsDriver& _nvsDriver;

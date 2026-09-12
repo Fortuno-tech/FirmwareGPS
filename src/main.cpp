@@ -102,6 +102,7 @@ fortico::core::CompositeLogSink g_logSink(g_serialLogSink, g_sdLogSink);
 fortico::core::Logger g_logger;
 fortico::middleware::CellularMqttClient g_mqttClient(g_sim7600, g_logger);
 char g_deviceId[32] = {};
+char g_vehicleId[32] = {};
 char g_telemetryTopic[96] = {};
 fortico::services::SecurityService g_securityService(g_nvsDriver);
 fortico::services::StorageService g_storageService(
@@ -280,20 +281,23 @@ void handleSerialProvisioning(
                             Serial.println(F("PROV:CERT:FAIL"));
                         }
                     } else if (line.startsWith("PROV:")) {
-                        // Parse PROV:<rootKeyHex>:<otaPubKeyHex>:<deviceId>:<clientId>:<user>:<pass>
+                        // Parse PROV:<rootKeyHex>:<otaPubKeyHex>:<deviceId>:<vehicleId>:<clientId>:<user>:<pass>
                         int idx1 = line.indexOf(':', 5);
                         int idx2 = line.indexOf(':', idx1 + 1);
                         int idx3 = line.indexOf(':', idx2 + 1);
                         int idx4 = line.indexOf(':', idx3 + 1);
                         int idx5 = line.indexOf(':', idx4 + 1);
+                        int idx6 = line.indexOf(':', idx5 + 1);
 
-                        if (idx1 > 0 && idx2 > idx1 && idx3 > idx2 && idx4 > idx3 && idx5 > idx4) {
+                        if (idx1 > 0 && idx2 > idx1 && idx3 > idx2 && idx4 > idx3 &&
+                            idx5 > idx4 && idx6 > idx5) {
                             String rootKeyHex = line.substring(5, idx1);
                             String otaPubKeyHex = line.substring(idx1 + 1, idx2);
                             String deviceId = line.substring(idx2 + 1, idx3);
-                            String clientId = line.substring(idx3 + 1, idx4);
-                            String username = line.substring(idx4 + 1, idx5);
-                            String password = line.substring(idx5 + 1);
+                            String vehicleId = line.substring(idx3 + 1, idx4);
+                            String clientId = line.substring(idx4 + 1, idx5);
+                            String username = line.substring(idx5 + 1, idx6);
+                            String password = line.substring(idx6 + 1);
 
                             uint8_t rootKey[32] = {};
                             uint8_t otaPubKey[32] = {};
@@ -306,7 +310,9 @@ void handleSerialProvisioning(
                                 strncpy(creds.username, username.c_str(), sizeof(creds.username) - 1);
                                 strncpy(creds.password, password.c_str(), sizeof(creds.password) - 1);
 
-                                if (provisioningService.provisionDevice(rootKey, 32, otaPubKey, 32, creds, deviceId.c_str())) {
+                                if (provisioningService.provisionDevice(rootKey, 32, otaPubKey, 32,
+                                                                        creds, deviceId.c_str(),
+                                                                        vehicleId.c_str())) {
                                     Serial.println(F("PROV:OK"));
                                     return;
                                 }
@@ -335,11 +341,12 @@ void setup()
     std::snprintf(g_deviceId, sizeof(g_deviceId), "%s_%03lX",
                   fortico::mqtt_identity::DEVICE_ID_PREFIX,
                   static_cast<unsigned long>(mac & 0xFFFULL));
+    std::strncpy(g_vehicleId, fortico::mqtt_identity::VEHICLE_ID,
+                 sizeof(g_vehicleId) - 1U);
     std::snprintf(g_telemetryTopic, sizeof(g_telemetryTopic),
                   fortico::topics::TELEMETRY,
-                  fortico::mqtt_identity::VEHICLE_ID);
-    g_telemetryService.setIdentity(g_deviceId,
-                                   fortico::mqtt_identity::VEHICLE_ID);
+                  g_vehicleId);
+    g_telemetryService.setIdentity(g_deviceId, g_vehicleId);
 
     if (!g_logger.init(fortico::logging::DEVELOPMENT_MIN_LEVEL,
                        &g_logSink) || !g_logger.start()) {
@@ -411,9 +418,17 @@ void setup()
         provisionedDeviceId[0] != '\0') {
         std::strncpy(g_deviceId, provisionedDeviceId, sizeof(g_deviceId) - 1U);
         g_deviceId[sizeof(g_deviceId) - 1U] = '\0';
-        g_telemetryService.setIdentity(g_deviceId,
-                                       fortico::mqtt_identity::VEHICLE_ID);
     }
+    char provisionedVehicleId[sizeof(g_vehicleId)]{};
+    if (g_securityService.loadVehicleId(provisionedVehicleId,
+                                        sizeof(provisionedVehicleId)) &&
+        provisionedVehicleId[0] != '\0') {
+        std::strncpy(g_vehicleId, provisionedVehicleId, sizeof(g_vehicleId) - 1U);
+        g_vehicleId[sizeof(g_vehicleId) - 1U] = '\0';
+    }
+    std::snprintf(g_telemetryTopic, sizeof(g_telemetryTopic),
+                  fortico::topics::TELEMETRY, g_vehicleId);
+    g_telemetryService.setIdentity(g_deviceId, g_vehicleId);
 
     uint8_t otaPubKey[32] = {};
     fortico::services::OtaKeyStore otaKeyStore(g_nvsDriver);

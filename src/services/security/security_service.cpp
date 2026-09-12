@@ -58,19 +58,23 @@ bool SecurityService::provisionRootKey(const uint8_t* key, std::size_t length)
 }
 
 bool SecurityService::provision(const uint8_t* key, std::size_t keyLength,
-    const types::MqttCredentials& credentials, const char* deviceId)
+    const types::MqttCredentials& credentials, const char* deviceId,
+    const char* vehicleId)
 {
     if (key == nullptr || keyLength != KeySize || deviceId == nullptr ||
-        deviceId[0] == '\0' || credentials.clientId[0] == '\0' ||
+        vehicleId == nullptr || deviceId[0] == '\0' || vehicleId[0] == '\0' ||
+        credentials.clientId[0] == '\0' ||
         credentials.username[0] == '\0' || credentials.password[0] == '\0') {
         return false;
     }
     if (!provisionRootKey(key, keyLength) ||
-        !storeMqttCredentials(credentials) || !storeDeviceId(deviceId)) {
+        !storeMqttCredentials(credentials) || !storeDeviceId(deviceId) ||
+        !storeVehicleId(vehicleId)) {
         if (_nvsDriver.isInitialized() &&
             _nvsDriver.open(security::NVS_NAMESPACE, false)) {
             _nvsDriver.remove(security::NVS_KEY_MQTT_CREDS);
             _nvsDriver.remove(security::NVS_KEY_DEVICE_ID);
+            _nvsDriver.remove(security::NVS_KEY_VEHICLE_ID);
             _nvsDriver.remove(security::NVS_KEY_SECURITY_ROOT);
             _nvsDriver.close();
         }
@@ -207,6 +211,41 @@ bool SecurityService::loadDeviceId(char* deviceId, std::size_t size) const
                                              deviceId, size);
     _nvsDriver.close();
     return loaded;
+}
+
+bool SecurityService::storeVehicleId(const char* vehicleId)
+{
+    if (!isRunning() || vehicleId == nullptr || vehicleId[0] == '\0') return false;
+    if (!_nvsDriver.open(security::NVS_NAMESPACE, false)) return false;
+    const bool stored = _nvsDriver.putString(security::NVS_KEY_VEHICLE_ID,
+                                             vehicleId);
+    _nvsDriver.close();
+    return stored;
+}
+
+bool SecurityService::loadVehicleId(char* vehicleId, std::size_t size) const
+{
+    if (!isRunning() || vehicleId == nullptr || size == 0U) return false;
+    if (!_nvsDriver.open(security::NVS_NAMESPACE, true)) return false;
+    const bool loaded = _nvsDriver.getString(security::NVS_KEY_VEHICLE_ID,
+                                             vehicleId, size);
+    _nvsDriver.close();
+    return loaded;
+}
+
+bool SecurityService::clearProvisioning()
+{
+    if (!_nvsDriver.isInitialized() ||
+        !_nvsDriver.open(security::NVS_NAMESPACE, false)) return false;
+    const bool cleared =
+        _nvsDriver.remove(security::NVS_KEY_MQTT_CREDS) &&
+        _nvsDriver.remove(security::NVS_KEY_DEVICE_ID) &&
+        _nvsDriver.remove(security::NVS_KEY_VEHICLE_ID) &&
+        _nvsDriver.remove(security::NVS_KEY_SECURITY_ROOT) &&
+        _nvsDriver.remove(security::NVS_KEY_OTA_PUBKEY);
+    _nvsDriver.close();
+    stop();
+    return cleared;
 }
 
 }  // namespace services

@@ -35,7 +35,7 @@ public:
     bool provisionDevice(const uint8_t* rootKey, std::size_t rootKeyLen,
                          const uint8_t* otaPubKey, std::size_t otaPubKeyLen,
                          const types::MqttCredentials& mqttCreds,
-                         const char* deviceId);
+                         const char* deviceId, const char* vehicleId);
     bool storeOtaPublicKey(const uint8_t* key, std::size_t length);
     bool loadOtaPublicKey(uint8_t* key, std::size_t length) const;
 
