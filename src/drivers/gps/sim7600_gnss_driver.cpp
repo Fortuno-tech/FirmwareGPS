@@ -151,7 +151,8 @@ bool Sim7600GnssDriver::readPosition(types::GpsData& position)
     char response[kResponseSize]{};
     if (!sendCommand("AT+CGNSSINFO", response, sizeof(response),
                      hardware::SIM7600_GNSS_QUERY_TIMEOUT_MS)) {
-        _healthy = false;
+        // Une lecture GNSS peut expirer sans que le modem soit en panne.
+        // poll() conserve l'etat de sante base sur la liaison modem.
         return false;
     }
     return parseCgnssInfo(response, position);
