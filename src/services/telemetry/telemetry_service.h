@@ -1,10 +1,14 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 
 #include "interfaces/iservice.h"
 #include "managers/telemetry_manager/telemetry_manager.h"
 #include "services/gps/gps_service.h"
+#include "types/auth_types.h"
+#include "types/fuel_types.h"
+#include "types/relay_types.h"
 
 namespace fortico {
 namespace services {
@@ -26,12 +30,24 @@ public:
 	void update();
 	const char* lastPayload() const;
 
+	void setActiveTracking(bool active);
+	bool isActiveTracking() const;
+	void setPublishInterval(uint32_t intervalMs);
+	bool forcePublish();
+
+	void setRelay(types::RelayState relay);
+	void setAuthentication(types::AuthenticationResult result);
+	void setFuel(const types::FuelLevel& fuel);
+
 private:
 	managers::TelemetryManager& _manager;
 	ITelemetrySink* _sink;
 	const GpsService* _gpsService;
 	char _payload[1024];
 	bool _running;
+	uint32_t _publishIntervalMs;
+	uint64_t _lastPublishMs;
+	bool _activeTracking;
 };
 
 }  // namespace services

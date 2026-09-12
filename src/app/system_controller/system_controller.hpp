@@ -27,6 +27,7 @@
 #include "services/sim7600/sim7600_service.h"
 #include "services/storage/storage_service.h"
 #include "services/telemetry/telemetry_service.h"
+#include "types/alert_types.h"
 
 namespace fortico {
 namespace app {
@@ -114,11 +115,17 @@ private:
 	uint64_t _lastHeartbeatMs;
 	uint64_t _lastAuthenticationTimestamp;
 	uint64_t _lastGpsLogMs;
+	uint64_t _lastAlertTimestamp;
+	types::AlertCode _lastAlertCode;
+	bool _hasProcessedAlert;
+	uint64_t _lastBatteryLogMs;
 
 	void setBootStage(BootStage stage, const char* message);
 	bool failBoot(const char* message, constants::ErrorCode error);
 	void logSim7600Diagnostics();
 	void logGpsPosition();
+	void logBatteryStatus();
+	void processAlerts();
 	void synchronizeRtcFromNetwork();
 };
 
