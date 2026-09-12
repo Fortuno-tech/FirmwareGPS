@@ -9,6 +9,11 @@
 #include "hal/uart/uart_hal.h"
 #include "interfaces/idriver.h"
 
+#ifdef ESP32_TARGET
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#endif
+
 namespace fortico {
 namespace drivers {
 
@@ -54,6 +59,8 @@ public:
 	bool deleteCertificate(const char* certificateFile);
 	bool downloadCertificate(const char* certificateFile, const uint8_t* certData,
 							 std::size_t certLen);
+	bool lockTransaction(uint32_t timeoutMs);
+	void unlockTransaction();
 
 private:
 	bool sendCommandUntil(const char* command, const char* completionToken,
@@ -69,6 +76,9 @@ private:
 	bool _healthy;
 	bool _active;
 	bool _dataConnected;
+#ifdef ESP32_TARGET
+	SemaphoreHandle_t _transactionMutex;
+#endif
 };
 
 }  // namespace drivers

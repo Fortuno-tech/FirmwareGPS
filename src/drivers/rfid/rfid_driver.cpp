@@ -686,6 +686,9 @@ bool RfidDriver::readUid(
     uint32_t timeoutMs)
 {
     uidLength = 0U;
+    const uint64_t readStartMs = millis();
+    Serial.printf("[PERF][RFID] readUid START t=%llu\n",
+              static_cast<unsigned long long>(readStartMs));
 
     if (!_initialized ||
         !_active ||
@@ -715,7 +718,12 @@ bool RfidDriver::readUid(
     _i2cHal.native().setTimeOut(hardware::I2C_TRANSACTION_MAX_MS);
     _i2cHal.unlock();
 
-    return result && uidLength > 0U && uidLength <= 16U;
+    const bool available = result && uidLength > 0U && uidLength <= 16U;
+    Serial.printf("[PERF][RFID] readUid END duration=%llu result=%s uidLength=%u\n",
+              static_cast<unsigned long long>(millis() - readStartMs),
+              available ? "true" : "false",
+              static_cast<unsigned int>(uidLength));
+    return available;
 
 #else
 

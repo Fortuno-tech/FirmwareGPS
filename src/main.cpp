@@ -44,6 +44,7 @@
 #include "services/storage/sd_log_sink.h"
 #include "services/telemetry/telemetry_service.h"
 #include "services/mqtt/mqtt_telemetry_sink.h"
+#include "services/mqtt/mqtt_publish_task.h"
 #include "managers/power_manager/power_manager.h"
 #include "managers/ota_manager/ota_manager.h"
 #include "services/rfid/rfid_service.h"
@@ -99,6 +100,9 @@ fortico::services::SdLogSink g_sdLogSink(g_sdDriver);
 fortico::core::CompositeLogSink g_logSink(g_serialLogSink, g_sdLogSink);
 fortico::core::Logger g_logger;
 fortico::middleware::CellularMqttClient g_mqttClient(g_sim7600, g_logger);
+fortico::services::MqttPublishQueue g_mqttPublishQueue(g_logger);
+fortico::services::MqttPublishTask g_mqttPublishTask(
+    g_mqttPublishQueue, g_mqttClient, g_logger);
 fortico::services::SecurityService g_securityService(g_nvsDriver);
 fortico::services::StorageService g_storageService(
     g_nvsDriver, g_securityService, &g_sdDriver);
@@ -117,7 +121,7 @@ fortico::services::DiagnosticsService g_diagnosticsService(
     g_diagnosticsManager, g_diagnostics, &g_eventBus);
 fortico::managers::TelemetryManager g_telemetryManager(g_battery, &g_eventBus);
 fortico::services::MqttTelemetrySink g_telemetrySink(
-    g_mqttClient, "fortico/telemetry");
+    g_mqttPublishQueue, "fortico/telemetry");
 fortico::services::TelemetryService g_telemetryService(
     g_telemetryManager, &g_telemetrySink, &g_gpsService);
 fortico::app::Application g_application(
@@ -404,6 +408,9 @@ void setup()
 	if (!g_started) {
 		g_logger.error(fortico::logging::TAG_SYSTEM_CONTROLLER,
 					   "demarrage application impossible");
+    } else if (!g_mqttPublishTask.start()) {
+        g_logger.error(fortico::logging::TAG_MQTT,
+                       "demarrage MqttPublishTask impossible");
 	}
 }
 

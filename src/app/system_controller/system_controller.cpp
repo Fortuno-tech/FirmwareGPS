@@ -1,5 +1,7 @@
 #include "app/system_controller/system_controller.hpp"
 
+#include <Arduino.h>
+
 #include "config/hardware_config.h"
 #include "config/network_config.h"
 #include "utils/timer_utils.h"
@@ -224,6 +226,9 @@ bool SystemController::start()
 void SystemController::update()
 {
 	if (!_running) return;
+	const uint64_t updateStartMs = utils::Timer::millis();
+	Serial.printf("[PERF][SYSTEM] update START t=%llu\n",
+				  static_cast<unsigned long long>(updateStartMs));
 
 	_gpsService.update();
 	logGpsPosition();
@@ -328,6 +333,8 @@ void SystemController::update()
 
 	_diagnosticsService.update();
 	_telemetryService.update();
+	Serial.printf("[PERF][SYSTEM] update END duration=%llu\n",
+				  static_cast<unsigned long long>(utils::Timer::millis() - updateStartMs));
 }
 
 void SystemController::processAlerts()

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "middleware/mqtt_client/mqtt_client.h"
+#include "services/mqtt/mqtt_publish_queue.h"
 #include "services/telemetry/telemetry_service.h"
 
 namespace fortico {
@@ -8,16 +8,17 @@ namespace services {
 
 class MqttTelemetrySink final : public ITelemetrySink {
 public:
-    MqttTelemetrySink(middleware::MqttClient& client, const char* topic)
-        : _client(client), _topic(topic) {}
+    MqttTelemetrySink(MqttPublishQueue& queue, const char* topic)
+        : _queue(queue), _topic(topic) {}
 
-    bool publish(const char* payload, std::size_t length) override
+    bool publish(const char* payload, std::size_t length,
+                 bool highPriority = false) override
     {
-        return _client.publish(_topic, payload, length);
+        return _queue.enqueue(_topic, payload, length, highPriority);
     }
 
 private:
-    middleware::MqttClient& _client;
+    MqttPublishQueue& _queue;
     const char* _topic;
 };
 

@@ -5,6 +5,7 @@
 
 #include "config/sim7600_mqtt_config.h"
 #include "config/logging_config.h"
+#include "utils/timer_utils.h"
 
 namespace {
 
@@ -15,6 +16,20 @@ bool isAtSafeString(const char* value)
            std::strchr(value, '\r') == nullptr &&
            std::strchr(value, '\n') == nullptr;
 }
+
+class ModemTransactionGuard final {
+public:
+    explicit ModemTransactionGuard(fortico::drivers::Sim7600Driver& modem)
+        : _modem(modem), _locked(_modem.lockTransaction(portMAX_DELAY)) {}
+
+    ~ModemTransactionGuard() { if (_locked) _modem.unlockTransaction(); }
+
+    bool locked() const { return _locked; }
+
+private:
+    fortico::drivers::Sim7600Driver& _modem;
+    bool _locked;
+};
 
 }  // namespace
 
@@ -165,30 +180,81 @@ bool CellularMqttClient::connect(const char* host, uint16_t port)
 bool CellularMqttClient::publish(const char* topic, const void* payload,
                                  std::size_t length)
 {
-    if (!_connected || topic == nullptr || payload == nullptr || length == 0U)
+    const uint64_t publishStartMs = utils::Timer::millis();
+    _logger.info(logging::TAG_MQTT, "[PERF][MQTT] Cellular publish START t=%llu",
+                 static_cast<unsigned long long>(publishStartMs));
+    if (!_connected || !_modem.isHealthy() || topic == nullptr ||
+        payload == nullptr || length == 0U) {
+        _logger.error(logging::TAG_MQTT,
+                      "[MQTT][ERROR] publish failed step=VALIDATION connected=%s modemHealthy=%s",
+                      _connected ? "true" : "false",
+                      _modem.isHealthy() ? "true" : "false");
         return false;
+    }
+    ModemTransactionGuard transaction(_modem);
+    if (!transaction.locked()) {
+        _logger.error(logging::TAG_MQTT,
+                      "[MQTT][ERROR] publish failed step=MUTEX response=lock timeout");
+        return false;
+    }
     const std::size_t topicLength = std::strlen(topic);
-    if (topicLength == 0U || topicLength > 1024U || length > 10240U) return false;
+    if (topicLength == 0U || topicLength > 1024U || length > 10240U) {
+        _logger.error(logging::TAG_MQTT,
+                      "[MQTT][ERROR] publish failed step=VALIDATION topicLength=%u payloadLength=%u",
+                      static_cast<unsigned int>(topicLength),
+                      static_cast<unsigned int>(length));
+        return false;
+    }
     char response[128]{};
     char command[64]{};
     std::snprintf(command, sizeof(command),
                   modem_mqtt::Commands::SET_TOPIC_LENGTH,
                   static_cast<unsigned int>(topicLength));
-    if (!_modem.beginMqttInput(command, response, sizeof(response), 2000U)) return false;
+    _logger.info(logging::TAG_MQTT, "[MQTT][AT] CMQTTTOPIC START command=%s", command);
+    if (!_modem.beginMqttInput(command, response, sizeof(response), 2000U)) {
+        _logger.error(logging::TAG_MQTT,
+                      "[MQTT][ERROR] publish failed step=CMQTTTOPIC response=%s", response);
+        return false;
+    }
+    _logger.info(logging::TAG_MQTT, "[MQTT][AT] CMQTTTOPIC END result=true response=%s", response);
+    _logger.info(logging::TAG_MQTT, "[MQTT][AT] TOPIC WRITE START length=%u",
+                 static_cast<unsigned int>(topicLength));
     if (!_modem.writeRaw(reinterpret_cast<const uint8_t*>(topic),
-                         topicLength, response, sizeof(response), 2000U)) return false;
+                         topicLength, response, sizeof(response), 2000U)) {
+        _logger.error(logging::TAG_MQTT,
+                      "[MQTT][ERROR] publish failed step=TOPIC_WRITE response=%s", response);
+        return false;
+    }
+    _logger.info(logging::TAG_MQTT, "[MQTT][AT] TOPIC WRITE END result=true response=%s", response);
     std::snprintf(command, sizeof(command),
                   modem_mqtt::Commands::SET_PAYLOAD_LENGTH,
                   static_cast<unsigned int>(length));
-    if (!_modem.beginMqttInput(command, response, sizeof(response), 2000U)) return false;
+    _logger.info(logging::TAG_MQTT, "[MQTT][AT] CMQTTPAYLOAD START command=%s", command);
+    if (!_modem.beginMqttInput(command, response, sizeof(response), 2000U)) {
+        _logger.error(logging::TAG_MQTT,
+                      "[MQTT][ERROR] publish failed step=CMQTTPAYLOAD response=%s", response);
+        return false;
+    }
+    _logger.info(logging::TAG_MQTT, "[MQTT][AT] CMQTTPAYLOAD PROMPT received response=%s", response);
     if (!_modem.writeRaw(static_cast<const uint8_t*>(payload), length,
-                         response, sizeof(response), 5000U)) return false;
+                         response, sizeof(response), 5000U)) {
+        _logger.error(logging::TAG_MQTT,
+                      "[MQTT][ERROR] publish failed step=PAYLOAD_WRITE length=%u response=%s",
+                      static_cast<unsigned int>(length), response);
+        return false;
+    }
+    _logger.info(logging::TAG_MQTT, "[MQTT][AT] PAYLOAD WRITE END result=true response=%s", response);
     std::snprintf(command, sizeof(command), modem_mqtt::Commands::PUBLISH,
                   modem_mqtt::Commands::PUBLISH_QOS,
                   modem_mqtt::Commands::PUBLISH_TIMEOUT_SECONDS);
     const bool published = _modem.sendMqttCommand(command, "+CMQTTPUB: 0,0",
                                                    response, sizeof(response),
                                                    60000U);
+    _logger.info(logging::TAG_MQTT, "[MQTT][AT] CMQTTPUB RESULT response=%s result=%s",
+                     response, published ? "true" : "false");
+    _logger.info(logging::TAG_MQTT, "[PERF][MQTT] Cellular publish END duration=%llu result=%s",
+                 static_cast<unsigned long long>(utils::Timer::millis() - publishStartMs),
+                 published ? "true" : "false");
     if (!published) logMqttFailure("CMQTTPUB", response, "+CMQTTPUB:");
     return published;
 }

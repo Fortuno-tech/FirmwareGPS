@@ -35,6 +35,9 @@ constants::ErrorCode RtcDriver::init()
 
 bool RtcDriver::readDateTime(RtcDateTime& dateTime)
 {
+	const uint64_t readStartMs = utils::Timer::millis();
+	Serial.printf("[PERF][RTC] readDateTime START t=%llu\n",
+			  static_cast<unsigned long long>(readStartMs));
 	if (!_initialized || !_active) return false;
 
     // Verrouillage du mutex I2C indispensable
@@ -47,7 +50,11 @@ bool RtcDriver::readDateTime(RtcDateTime& dateTime)
     const bool ok = _i2cHal.writeRead(kAddress, &reg, 1U, data, sizeof(data), hardware::I2C_TRANSACTION_MAX_MS);
 	_i2cHal.unlock();
 
-	if (!ok) return false;
+	if (!ok) {
+		Serial.printf("[PERF][RTC] readDateTime END duration=%llu result=false\n",
+				  static_cast<unsigned long long>(utils::Timer::millis() - readStartMs));
+		return false;
+	}
 
     dateTime.second = bcdToDecimal(data[0] & 0x7FU);
     dateTime.minute = bcdToDecimal(data[1] & 0x7FU);
@@ -55,7 +62,11 @@ bool RtcDriver::readDateTime(RtcDateTime& dateTime)
     dateTime.day = bcdToDecimal(data[4] & 0x3FU);
     dateTime.month = bcdToDecimal(data[5] & 0x1FU);
     dateTime.year = static_cast<uint16_t>(2000U + bcdToDecimal(data[6]));
-    return valid(dateTime);
+	const bool validDateTime = valid(dateTime);
+	Serial.printf("[PERF][RTC] readDateTime END duration=%llu result=%s\n",
+			  static_cast<unsigned long long>(utils::Timer::millis() - readStartMs),
+			  validDateTime ? "true" : "false");
+	return validDateTime;
 }
 constants::ErrorCode RtcDriver::poll()
 {

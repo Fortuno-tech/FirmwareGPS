@@ -1,5 +1,6 @@
 #include "services/telemetry/telemetry_service.h"
 
+#include <Arduino.h>
 #include <cstring>
 
 #include "services/mqtt/payload_builder.h"
@@ -48,17 +49,32 @@ void TelemetryService::setPublishInterval(uint32_t intervalMs)
 
 bool TelemetryService::forcePublish()
 {
+	const uint64_t publishStartMs = utils::Timer::millis();
+	Serial.printf("[PERF][TELEMETRY] forcePublish START t=%llu\n",
+			  static_cast<unsigned long long>(publishStartMs));
 	if (!_running) return false;
 	if (_gpsService != nullptr) _manager.setGps(_gpsService->data());
 	_manager.update();
 	if (!PayloadBuilder::telemetry(_manager.packet(), _payload, sizeof(_payload))) return false;
+	Serial.printf("[PERF][TELEMETRY] payload build duration=%llu\n",
+			  static_cast<unsigned long long>(utils::Timer::millis() - publishStartMs));
 	if (_sink != nullptr) {
-		const bool published = _sink->publish(_payload, std::strlen(_payload));
+		Serial.printf("[PERF][MQTT] publish START t=%llu\n",
+				  static_cast<unsigned long long>(utils::Timer::millis()));
+		const bool published = _sink->publish(_payload, std::strlen(_payload), true);
+		Serial.printf("[PERF][MQTT] publish END duration=%llu result=%s\n",
+				  static_cast<unsigned long long>(utils::Timer::millis() - publishStartMs),
+				  published ? "true" : "false");
 		if (published) {
 			_lastPublishMs = utils::Timer::millis();
 		}
+		Serial.printf("[PERF][TELEMETRY] forcePublish END duration=%llu result=%s\n",
+				  static_cast<unsigned long long>(utils::Timer::millis() - publishStartMs),
+				  published ? "true" : "false");
 		return published;
 	}
+	Serial.printf("[PERF][TELEMETRY] forcePublish END duration=%llu result=false\n",
+			  static_cast<unsigned long long>(utils::Timer::millis() - publishStartMs));
 	return false;
 }
 
@@ -90,10 +106,9 @@ void TelemetryService::update()
 	if (nowMs - _lastPublishMs < _publishIntervalMs) return;
 
 	if (!PayloadBuilder::telemetry(_manager.packet(), _payload, sizeof(_payload))) return;
-	if (_sink != nullptr) {
-		if (_sink->publish(_payload, std::strlen(_payload))) {
-			_lastPublishMs = nowMs;
-		}
+	if (_sink != nullptr &&
+		_sink->publish(_payload, std::strlen(_payload), false)) {
+		_lastPublishMs = nowMs;
 	}
 }
 

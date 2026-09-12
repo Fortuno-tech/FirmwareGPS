@@ -16,7 +16,30 @@ namespace drivers {
 Sim7600Driver::Sim7600Driver(hal::UartHal& uartHal, hal::DelayHal& delayHal)
 	: _uartHal(uartHal), _delayHal(delayHal), _initialized(false), _healthy(false), _active(false),
 	  _dataConnected(false)
+#ifdef ESP32_TARGET
+	  , _transactionMutex(xSemaphoreCreateRecursiveMutex())
+#endif
 {
+}
+
+bool Sim7600Driver::lockTransaction(uint32_t timeoutMs)
+{
+#ifdef ESP32_TARGET
+	if (_transactionMutex == nullptr) return false;
+	const TickType_t ticks = timeoutMs == portMAX_DELAY
+		? portMAX_DELAY : pdMS_TO_TICKS(timeoutMs);
+	return xSemaphoreTakeRecursive(_transactionMutex, ticks) == pdTRUE;
+#else
+	(void)timeoutMs;
+	return true;
+#endif
+}
+
+void Sim7600Driver::unlockTransaction()
+{
+#ifdef ESP32_TARGET
+	if (_transactionMutex != nullptr) xSemaphoreGiveRecursive(_transactionMutex);
+#endif
 }
 
 constants::ErrorCode Sim7600Driver::init()
@@ -112,6 +135,7 @@ bool Sim7600Driver::sendCommandUntil(const char* command,
 		responseSize < 2U || completionToken == nullptr || completionToken[0] == '\0') {
 		return false;
 	}
+	if (!lockTransaction(hardware::SIM7600_UART_MUTEX_TIMEOUT_MS)) return false;
 
 	drainInput();
 	response[0] = '\0';
@@ -120,6 +144,7 @@ bool Sim7600Driver::sendCommandUntil(const char* command,
 					   commandLength) != commandLength ||
 		_uartHal.write(reinterpret_cast<const uint8_t*>("\r\n"), 2U) != 2U) {
 		_healthy = false;
+		unlockTransaction();
 		return false;
 	}
 
@@ -135,13 +160,16 @@ bool Sim7600Driver::sendCommandUntil(const char* command,
 		response[length++] = static_cast<char>(byte);
 		response[length] = '\0';
 		if (std::strstr(response, completionToken) != nullptr) {
+			unlockTransaction();
 			return true;
 		}
 		if (std::strstr(response, "\r\nERROR") != nullptr ||
 			std::strstr(response, "\nERROR") != nullptr) {
+			unlockTransaction();
 			return false;
 		}
 	}
+	unlockTransaction();
 	return false;
 }
 
@@ -151,23 +179,44 @@ bool Sim7600Driver::writeRaw(const uint8_t* data, std::size_t length,
 {
 	if (!_initialized || !_active || data == nullptr || length == 0U ||
 		response == nullptr || responseSize < 2U) return false;
+	if (!lockTransaction(hardware::SIM7600_UART_MUTEX_TIMEOUT_MS)) return false;
 	response[0] = '\0';
-	if (_uartHal.write(data, length) != length) return false;
+	if (_uartHal.write(data, length) != length) {
+		unlockTransaction();
+		return false;
+	}
 	std::size_t received = 0U;
+	char recent[8]{};
+	std::size_t recentLength = 0U;
 	const uint32_t startMs = utils::Timer::millis();
-	while (utils::Timer::millis() - startMs < timeoutMs &&
-		   received + 1U < responseSize) {
+	while (utils::Timer::millis() - startMs < timeoutMs) {
 		uint8_t byte = 0U;
 		if (_uartHal.read(&byte, 1U, 1U) == 0U) {
 			_delayHal.waitMs(1U);
 			continue;
 		}
-		response[received++] = static_cast<char>(byte);
-		response[received] = '\0';
-		if (std::strstr(response, "\nOK") != nullptr) return true;
-		if (std::strstr(response, "\r\nERROR") != nullptr ||
-			std::strstr(response, "\nERROR") != nullptr) return false;
+		if (received + 1U < responseSize) {
+			response[received++] = static_cast<char>(byte);
+			response[received] = '\0';
+		}
+		if (recentLength + 1U >= sizeof(recent)) {
+			std::memmove(recent, recent + 1U, sizeof(recent) - 2U);
+			recentLength = sizeof(recent) - 2U;
+		}
+		recent[recentLength++] = static_cast<char>(byte);
+		recent[recentLength] = '\0';
+		if (std::strstr(recent, "\r\nOK\r\n") != nullptr ||
+			std::strstr(recent, "\nOK\n") != nullptr) {
+			unlockTransaction();
+			return true;
+		}
+		if (std::strstr(recent, "\r\nERROR") != nullptr ||
+			std::strstr(recent, "\nERROR") != nullptr) {
+			unlockTransaction();
+			return false;
+		}
 	}
+	unlockTransaction();
 	return false;
 }
 

@@ -16,7 +16,8 @@ namespace services {
 class ITelemetrySink {
 public:
 	virtual ~ITelemetrySink() = default;
-	virtual bool publish(const char* payload, std::size_t length) = 0;
+	virtual bool publish(const char* payload, std::size_t length,
+						bool highPriority = false) = 0;
 };
 
 class TelemetryService : public interfaces::IService {
