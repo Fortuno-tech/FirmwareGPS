@@ -437,6 +437,7 @@ void SystemController::logSim7600Diagnostics()
 void SystemController::logGpsPosition()
 {
 	constexpr uint64_t gpsLogIntervalMs = 5000U;
+	constexpr uint64_t gpsStaleAfterMs = 3000U;
 	const uint64_t nowMs = utils::Timer::millis();
 	if (nowMs - _lastGpsLogMs < gpsLogIntervalMs) return;
 	_lastGpsLogMs = nowMs;
@@ -450,10 +451,21 @@ void SystemController::logGpsPosition()
 		return;
 	}
 
+	const uint64_t ageMs = nowMs - gps.timestamp;
+	if (ageMs > gpsStaleAfterMs) {
+		_logger.info(logging::TAG_TRACKING,
+					 "GPS: dernier fix connu, age=%llums lat=%.6f lon=%.6f alt=%.0fm vitesse=%.1fkm/h cap=%.0f sat=%u HDOP=%.1f PDOP=%.1f",
+					 static_cast<unsigned long long>(ageMs), gps.latitude,
+					 gps.longitude, gps.altitudeMeters, gps.speedKmh,
+					 gps.headingDeg, static_cast<unsigned int>(gps.satellites),
+					 gps.hdop, gps.pdop);
+		return;
+	}
+
 	_logger.info(logging::TAG_TRACKING,
 				 "GPS: fix=%u lat=%.6f lon=%.6f alt=%.0fm vitesse=%.1fkm/h cap=%.0f sat=%u HDOP=%.1f PDOP=%.1f",
-				 static_cast<unsigned int>(gps.fixMode), gps.latitude, gps.longitude,
-				 gps.altitudeMeters, gps.speedKmh, gps.headingDeg,
+				 static_cast<unsigned int>(gps.fixMode), gps.latitude,
+				 gps.longitude, gps.altitudeMeters, gps.speedKmh, gps.headingDeg,
 				 static_cast<unsigned int>(gps.satellites), gps.hdop, gps.pdop);
 }
 

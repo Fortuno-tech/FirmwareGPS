@@ -144,7 +144,7 @@ constexpr uint32_t    TIME_SERVICE_TASK_STACK_WORDS = 2048;
 
 /// LoggerTask — sérialisation logs, rotation
 constexpr UBaseType_t LOGGER_TASK_PRIORITY = 1;
-constexpr uint32_t    LOGGER_TASK_STACK_WORDS = 2048;
+constexpr uint32_t    LOGGER_TASK_STACK_WORDS = 4096;
 
 /// SchedulerTask — timers logiciels, flush NVS périodique
 constexpr UBaseType_t SCHEDULER_TASK_PRIORITY = 1;

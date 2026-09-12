@@ -57,8 +57,9 @@ void GpsService::update()
     }
     _lastPollMs = utils::Timer::millis();
     types::GpsData position = invalidPosition();
-    _driver.readPosition(position);
-    _data = position;
+    if (_driver.readPosition(position) && position.fixValid) {
+        _data = position;
+    }
 }
 
 const types::GpsData& GpsService::data() const { return _data; }
