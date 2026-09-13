@@ -72,16 +72,22 @@ constexpr uint8_t SD_MISO = 19;
 //    GPIO dédiés ; ils ne doivent pas être réutilisés par le modem.
 // ============================================================================
 
-/// PN532 — interruption vers l'ESP32
-constexpr uint8_t PN532_IRQ = 27;
-/// PN532 — reset matériel
+/// PN532 — IRQ optionnel réservé pour un futur mode IRQ-aware
+///
+/// Le pilote actuellement utilise la voie I2C pure validée par la librairie
+/// Adafruit PN532, donc ces GPIO ne sont pas requis pour le fonctionnement
+/// courant. Les conserver ici permet d'ouvrir un mode IRQ-aware plus tard
+/// sans modifier la cartographie globale.
+constexpr uint8_t PN532_IRQ = 35;
+/// PN532 — reset matériel réservé pour un futur mode IRQ-aware
 constexpr uint8_t PN532_RESET = 26;
 
 /// SIM7600E-L1C — UART1 TX vers le modem
 constexpr uint8_t SIM7600_TX1 = 17;
 /// SIM7600E-L1C — UART1 RX depuis le modem
 constexpr uint8_t SIM7600_RX1 = 16;
-
+/// SIM7600E-L1C — commande K/PWRKEY (active bas via breakout compatible 3,3 V)
+constexpr uint8_t SIM7600_PWRKEY = 14;
 // ============================================================================
 // 6. Actionneur critique — Relais de coupure moteur (5V, 20A)
 //    RelayManager est l'UNIQUE propriétaire logiciel autorisé à écrire cette

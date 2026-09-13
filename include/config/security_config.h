@@ -51,6 +51,10 @@ constexpr const char* NVS_KEY_APN_CREDS = "apn_creds";
 /// Liste blanche des UID RFID autorisés
 constexpr const char* NVS_KEY_RFID_WHITELIST = "rfid_whitelist";
 
+/// Marqueur indiquant que le badge RFID initial a déjà été ajouté.
+// ESP32 Preferences restricts NVS keys to 15 characters.
+constexpr const char* NVS_KEY_RFID_DEFAULT_SEEDED = "rfid_seeded";
+
 /// Clé racine provisionnée par l'outil de fabrication, jamais codée en dur.
 constexpr const char* NVS_KEY_SECURITY_ROOT = "security_root";
 

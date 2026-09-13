@@ -21,7 +21,7 @@ public:
 	void setRelay(types::RelayState relay);
 	void setAuthentication(types::AuthenticationResult result);
 	void setTemperature(float temperatureC);
-	types::TelemetryPacket packet() const;
+	const types::TelemetryPacket& packet() const;
 
 private:
 	drivers::BatteryDriver& _battery;

@@ -222,8 +222,12 @@ bool Sim7600GnssDriver::parseCgnssInfo(const char* response,
     float pdop = constants::INVALID_DOP;
     float hdop = constants::INVALID_DOP;
     if (!parseFloat(fields[10], altitude) || !parseFloat(fields[11], speedKnots) ||
-        !parseFloat(fields[12], heading) || !parseFloat(fields[13], pdop) ||
-        !parseFloat(fields[14], hdop)) {
+        !parseFloat(fields[13], pdop) || !parseFloat(fields[14], hdop)) {
+        return false;
+    }
+    if (fields[12][0] == '\0') {
+        heading = constants::INVALID_DOP;
+    } else if (!parseFloat(fields[12], heading)) {
         return false;
     }
 

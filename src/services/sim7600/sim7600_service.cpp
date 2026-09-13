@@ -46,7 +46,9 @@ bool Sim7600Service::runDiagnostics(Sim7600Diagnostics& diagnostics)
 {
     diagnostics = {};
     if (!isRunning()) return false;
-    char modemInformation[128]{};
+    // ATI may include manufacturer, model, revision, IMEI and capabilities.
+    // 128 bytes can truncate a valid SIM7600 response before its final OK.
+    char modemInformation[512]{};
     diagnostics.modemIdentified = _driver.getModemInformation(
         modemInformation, sizeof(modemInformation));
     diagnostics.simReady = _driver.isSimReady();
@@ -64,6 +66,16 @@ bool Sim7600Service::runDiagnostics(Sim7600Diagnostics& diagnostics)
 bool Sim7600Service::getIpAddress(char* ipAddress, std::size_t ipAddressSize)
 {
     return isRunning() && _driver.getIpAddress(ipAddress, ipAddressSize);
+}
+
+bool Sim7600Service::isDataConnected() const
+{
+    return isRunning() && _driver.isDataConnected();
+}
+
+bool Sim7600Service::getNetworkDateTime(drivers::RtcDateTime& dateTime)
+{
+    return isDataConnected() && _driver.getNetworkDateTime(dateTime);
 }
 
 }  // namespace services

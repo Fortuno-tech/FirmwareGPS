@@ -1,12 +1,15 @@
 #include "app/application/application.h"
 
+#include <Arduino.h>
+
 namespace fortico {
 namespace app {
 
-Application::Application(core::EventBus& eventBus,
+Application::Application(core::EventBus& eventBus, core::Logger& logger,
                          managers::AlertManager& alertManager,
                          services::AuthenticationService& authenticationService,
                          services::RfidService& rfidService,
+                         drivers::Sim7600PowerDriver& sim7600PowerDriver,
                          services::Sim7600Service& sim7600Service,
                          services::GpsService& gpsService,
                          services::DiagnosticsService& diagnosticsService,
@@ -25,9 +28,10 @@ Application::Application(core::EventBus& eventBus,
                          drivers::SdDriver& sdDriver,
                          middleware::CellularMqttClient& mqttClient)
     : _systemController(eventBus, alertManager, authenticationService,
-                        rfidService, sim7600Service, gpsService, diagnosticsService,
+                        rfidService, sim7600PowerDriver, sim7600Service,
+                        gpsService, diagnosticsService,
                         powerMonitor,
-                        errorHandler, securityService, storageService,
+                        errorHandler, logger, securityService, storageService,
                         telemetryService, powerManager, otaManager,
                         relayDriver, relayManager, fuelDriver, fuelManager,
                         rtcDriver, sdDriver, mqttClient),
@@ -89,6 +93,7 @@ void Application::updateTask(void* context)
 void Application::scheduledUpdate()
 {
     _systemController.update();
+
     _stateMachine.update(_systemController.powerState(),
                          _systemController.hasFault());
 }

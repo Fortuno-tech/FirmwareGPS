@@ -3,7 +3,9 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "drivers/rtc/rtc_driver.h"
 #include "constants/errors.h"
+#include "hal/delay/delay_hal.h"
 #include "hal/uart/uart_hal.h"
 #include "interfaces/idriver.h"
 
@@ -12,7 +14,7 @@ namespace drivers {
 
 class Sim7600Driver : public interfaces::IDriver {
 public:
-	explicit Sim7600Driver(hal::UartHal& uartHal);
+	Sim7600Driver(hal::UartHal& uartHal, hal::DelayHal& delayHal);
 
 	constants::ErrorCode init() override;
 	constants::ErrorCode poll() override;
@@ -24,6 +26,13 @@ public:
 
 	bool sendCommand(const char* command, char* response,
 					 std::size_t responseSize, uint32_t timeoutMs);
+	/// Attend l'URC final MQTT attendu ; un simple "OK" intermÃ©diaire ne suffit pas.
+	bool sendMqttCommand(const char* command, const char* successfulUrc,
+						 char* response, std::size_t responseSize,
+						 uint32_t timeoutMs);
+	/// Envoie une commande CMQTTxxx qui attend ensuite un topic/payload brut.
+	bool beginMqttInput(const char* command, char* response,
+					std::size_t responseSize, uint32_t timeoutMs);
 	bool writeRaw(const uint8_t* data, std::size_t length,
 				  char* response, std::size_t responseSize,
 				  uint32_t timeoutMs);
@@ -40,13 +49,22 @@ public:
 	bool activatePdp(uint32_t timeoutMs);
 	bool getIpAddress(char* ipAddress, std::size_t ipAddressSize);
 	bool isDataConnected() const;
+	bool getNetworkDateTime(RtcDateTime& dateTime);
+	bool hasCertificate(const char* certificateFile);
+	bool deleteCertificate(const char* certificateFile);
+	bool downloadCertificate(const char* certificateFile, const uint8_t* certData,
+							 std::size_t certLen);
 
 private:
+	bool sendCommandUntil(const char* command, const char* completionToken,
+						  char* response, std::size_t responseSize,
+						  uint32_t timeoutMs);
 	bool sendDiagnosticCommand(const char* command, char* response,
 						   std::size_t responseSize, uint32_t timeoutMs);
 	void drainInput();
 
 	hal::UartHal& _uartHal;
+	hal::DelayHal& _delayHal;
 	bool _initialized;
 	bool _healthy;
 	bool _active;

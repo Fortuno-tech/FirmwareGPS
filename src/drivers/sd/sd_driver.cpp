@@ -17,6 +17,8 @@
 
 #ifdef ESP32_TARGET
 #include <SD.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #endif
 
 namespace fortico {
@@ -67,7 +69,15 @@ constants::ErrorCode SdDriver::init()
 
     // Montage SD en utilisant le SPIClass géré par SpiHal.
     // SD.begin() avec SPIClass& garantit l'absence de conflit de bus.
-    if (!SD.begin(pins::SD_CS, _spiHal.native(), hardware::SPI_FREQUENCY_HZ)) {
+    bool mounted = false;
+    for (uint8_t attempt = 0U; attempt < 3U && !mounted; ++attempt) {
+        mounted = SD.begin(pins::SD_CS, _spiHal.native(), hardware::SPI_FREQUENCY_HZ);
+        if (!mounted && attempt < 2U) {
+            SD.end();
+            vTaskDelay(pdMS_TO_TICKS(50U));
+        }
+    }
+    if (!mounted) {
         _healthy = false;
         _mounted = false;
         return constants::ErrorCode::SD_NOT_MOUNTED;

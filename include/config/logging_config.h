@@ -57,6 +57,7 @@ constexpr const char* TAG_OTA               = "OTA";
 constexpr const char* TAG_SECURITY          = "SECURITY";
 constexpr const char* TAG_DIAGNOSTICS       = "DIAG";       
 constexpr const char* TAG_POWER             = "POWER";      
+constexpr const char* TAG_SIM7600           = "SIM7600";
 constexpr const char* TAG_APP_STATE         = "APPSTATE";  
 constexpr const char* TAG_TASK_MANAGER      = "TASKMGR";    
 constexpr const char* TAG_JWT_AUTH          = "JWTAUTH";  

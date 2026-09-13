@@ -48,8 +48,14 @@ bool StorageService::saveBadges() const
 	uint8_t stored[sizeof(_badges) + sizeof(uint32_t)]{};
 	std::memcpy(stored, &_badgeCount, sizeof(_badgeCount));
 	std::memcpy(stored + sizeof(_badgeCount), _badges, sizeof(_badges));
-	return _nvsDriver.putBlob(security::NVS_KEY_RFID_WHITELIST, stored,
-							  sizeof(stored));
+	// StorageService::start() closes its NVS session once the whitelist is
+	// loaded. Reopen it for every persistent update so serial/MQTT updates
+	// do not depend on an unrelated caller keeping NVS open.
+	if (!_nvsDriver.open(security::NVS_NAMESPACE, false)) return false;
+	const bool saved = _nvsDriver.putBlob(security::NVS_KEY_RFID_WHITELIST,
+									 stored, sizeof(stored));
+	_nvsDriver.close();
+	return saved;
 }
 
 bool StorageService::isBadgeAuthorized(const char* normalizedUid) const
