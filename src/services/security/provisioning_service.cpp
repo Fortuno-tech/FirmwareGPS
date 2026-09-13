@@ -213,14 +213,17 @@ bool ProvisioningService::loadOtaPublicKey(uint8_t* key, std::size_t length) con
 bool ProvisioningService::provisionDevice(const uint8_t* rootKey, std::size_t rootKeyLen,
                                            const uint8_t* otaPubKey, std::size_t otaPubKeyLen,
                                            const types::MqttCredentials& mqttCreds,
-                                           const char* deviceId) {
+                                           const char* deviceId,
+                                           const char* vehicleId) {
     if (isProvisioned()) {
         return false; // Prevents double provisioning
     }
-    if (!_securityService.provision(rootKey, rootKeyLen, mqttCreds, deviceId)) {
+    if (!_securityService.provision(rootKey, rootKeyLen, mqttCreds, deviceId,
+                                    vehicleId)) {
         return false;
     }
     if (!storeOtaPublicKey(otaPubKey, otaPubKeyLen)) {
+        _securityService.clearProvisioning();
         return false;
     }
     return true;

@@ -31,7 +31,8 @@ def main():
     parser = argparse.ArgumentParser(description="Fortico ESP32 Provisioning Tool")
     parser.add_argument("--port", required=True, help="Serial port (e.g. COM6 or /dev/ttyUSB0)")
     parser.add_argument("--baud", type=int, default=115200, help="Baud rate (default: 115200)")
-    parser.add_argument("--device-id", default="FORTICO-DEV-001", help="Device ID")
+    parser.add_argument("--device-id", default="EV_DS6-001", help="Hardware device ID")
+    parser.add_argument("--vehicle-id", default="VEH001", help="Stable fleet vehicle ID used in MQTT topics")
     parser.add_argument("--mqtt-client-id", help="MQTT Client ID (defaults to --device-id)")
     parser.add_argument("--mqtt-user", required=True, help="MQTT Username")
     parser.add_argument("--mqtt-pass", required=True, help="MQTT Password (never displayed)")
@@ -67,13 +68,14 @@ def main():
         print(f"Error: OTA public key must be 64 hex characters (32 bytes), got {len(ota_pubkey)}")
         sys.exit(1)
 
-    payload = f"PROV:{root_key}:{ota_pubkey}:{args.device_id}:{mqtt_client_id}:{args.mqtt_user}:{args.mqtt_pass}\n"
+    payload = f"PROV:{root_key}:{ota_pubkey}:{args.device_id}:{args.vehicle_id}:{mqtt_client_id}:{args.mqtt_user}:{args.mqtt_pass}\n"
 
     print("==================================================")
     print("      Fortico Device Provisioning Summary        ")
     print("==================================================")
     print(f" Port            : {args.port}")
     print(f" Device ID       : {args.device_id}")
+    print(f" Vehicle ID      : {args.vehicle_id}")
     print(f" MQTT Client ID  : {mqtt_client_id}")
     print(f" Root Key (HEX)  : {root_key[:8]}...{root_key[-8:]}")
     print(f" OTA PubKey(HEX) : {ota_pubkey[:8]}...{ota_pubkey[-8:]}")
