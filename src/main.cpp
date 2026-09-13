@@ -113,7 +113,7 @@ fortico::services::AuthenticationService g_authenticationService(
     g_authenticationManager);
 fortico::managers::AlertManager g_alertManager(g_button, g_buzzer, g_led);
 fortico::services::RfidService g_rfidService(
-    g_rfidDriver, g_authenticationService, g_eventBus);
+    g_rfidDriver, g_authenticationService, g_eventBus, g_logger);
 fortico::interfaces::IDriver* g_diagnosticDrivers[] = {
     &g_battery, &g_rfidDriver, &g_sim7600PowerDriver, &g_sim7600, &g_relayDriver,
     &g_fuelDriver, &g_rtcDriver, &g_sdDriver};

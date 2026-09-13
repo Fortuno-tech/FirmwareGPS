@@ -5,6 +5,7 @@
 #include <cstring>
 
 #include "config/hardware_config.h"
+#include "config/logging_config.h"
 #include "config/task_config.h"
 #include "constants/events.h"
 #include "utils/timer_utils.h"
@@ -15,10 +16,12 @@ namespace services {
 RfidService::RfidService(
     interfaces::IRfidDriver& driver,
     AuthenticationService& authentication,
-    interfaces::IPublisher& publisher)
+    interfaces::IPublisher& publisher,
+    core::Logger& logger)
     : _driver(driver)
     , _authentication(authentication)
     , _publisher(publisher)
+    , _logger(logger)
     , _running(false)
     , _lastUid{}
     , _lastUidLength(0U)
@@ -35,22 +38,22 @@ RfidService::RfidService(
 
 bool RfidService::start()
 {
-    Serial.println("[RFID] Demarrage service RFID...");
+    _logger.info(logging::TAG_RFID, "Demarrage service RFID...");
 
     if (_driver.init() != constants::ErrorCode::OK) {
-        Serial.println("[RFID][ERROR] Driver RFID init echouee");
+        _logger.error(logging::TAG_RFID, "Initialisation du driver RFID impossible");
         return false;
     }
 
     if (!_authentication.isRunning()) {
         if (!_authentication.start()) {
-            Serial.println("[RFID][ERROR] AuthenticationService start echoue");
+            _logger.error(logging::TAG_RFID, "Demarrage du service d'authentification impossible");
             return false;
         }
     }
 
     if (!_driver.start()) {
-        Serial.println("[RFID][ERROR] RfidDriver start echoue");
+        _logger.error(logging::TAG_RFID, "Demarrage du driver RFID impossible");
         return false;
     }
 
@@ -75,7 +78,7 @@ bool RfidService::start()
     _running = true;
     clearUid();
 
-    Serial.println("[RFID] Service RFID demarre");
+    _logger.info(logging::TAG_RFID, "Service RFID demarre avec succes");
     return true;
 }
 
@@ -95,7 +98,7 @@ void RfidService::stop()
         _resultQueue = nullptr;
     }
 
-    Serial.println("[RFID] Service RFID arrete");
+    _logger.info(logging::TAG_RFID, "Service RFID arrete");
 }
 
 bool RfidService::isRunning() const
@@ -137,12 +140,11 @@ void RfidService::pollDriver()
     uint8_t uid[16]{};
     uint8_t uidLength = 0U;
 
-    // Attente passive de 500 ms sur l'interruption IRQ (0% trafic I2C tant qu'aucun badge n'est là)
     const bool uidAvailable = _driver.readUid(uid, uidLength, 500U);
 
     if (!uidAvailable) {
         if (_cardPresent) {
-            Serial.println("[RFID] Badge retire");
+            _logger.info(logging::TAG_RFID, "Badge retire");
             clearUid();
         }
         return;
@@ -154,7 +156,6 @@ void RfidService::pollDriver()
 
     ++_uidCount;
 
-    // Anti-rebond si le même badge reste posé
     if (_cardPresent && isSameUid(uid, uidLength)) {
         return;
     }
@@ -162,8 +163,7 @@ void RfidService::pollDriver()
     char formattedUid[sizeof(_lastUid) * 3U]{};
     formatUid(uid, uidLength, formattedUid, sizeof(formattedUid));
 
-    Serial.print("[RFID] Nouveau badge : ");
-    Serial.println(formattedUid);
+    _logger.info(logging::TAG_RFID, "Nouveau badge detecte : %s", formattedUid);
 
     const uint64_t timestamp = utils::Timer::millis();
     const bool authorized = _authentication.authenticate(formattedUid, timestamp);
@@ -187,9 +187,9 @@ void RfidService::pollDriver()
     });
 
     if (authorized) {
-        Serial.println("[RFID] Authentification : AUTORISEE");
+        _logger.info(logging::TAG_RFID, "Authentification : AUTORISEE");
     } else {
-        Serial.println("[RFID] Authentification : REFUSEE");
+        _logger.warn(logging::TAG_RFID, "Authentification : REFUSEE (UID non autorise)");
     }
 
     rememberUid(uid, uidLength);

@@ -1,7 +1,6 @@
 #include "drivers/rfid/rfid_driver.h"
 
 #include <Arduino.h>
-#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 
@@ -11,54 +10,6 @@
 
 namespace fortico {
 namespace drivers {
-
-namespace {
-
-class RfidDiagnosticSerial {
-public:
-    void setLogger(core::Logger& logger) { _logger = &logger; }
-
-    void printf(const char* format, ...)
-    {
-        char message[192]{};
-        va_list args;
-        va_start(args, format);
-        std::vsnprintf(message, sizeof(message), format, args);
-        va_end(args);
-        if (_logger != nullptr) _logger->debug(logging::TAG_RFID, "%s", message);
-    }
-
-    void print(const char* value) { append(value != nullptr ? value : ""); }
-    void println() { flush(); }
-    void println(const char* value)
-    {
-        append(value != nullptr ? value : "");
-        flush();
-    }
-
-private:
-    void append(const char* value)
-    {
-        const std::size_t current = std::strlen(_line);
-        if (current + std::strlen(value) + 1U >= sizeof(_line)) return;
-        std::strcat(_line, value);
-    }
-
-    void flush()
-    {
-        if (_logger != nullptr) _logger->debug(logging::TAG_RFID, "%s", _line);
-        _line[0] = '\0';
-    }
-
-    core::Logger* _logger = nullptr;
-    char _line[128]{};
-};
-
-RfidDiagnosticSerial g_rfidDiagnosticSerial;
-
-}  // namespace
-
-#define Serial (g_rfidDiagnosticSerial)
 
 /* ============================================================
  * CONSTRUCTEUR
@@ -74,7 +25,6 @@ RfidDriver::RfidDriver(hal::I2cHal& i2cHal, core::Logger& logger)
     , _healthy(false)
     , _active(false)
 {
-    g_rfidDiagnosticSerial.setLogger(_logger);
 }
 
 /* ============================================================
@@ -136,7 +86,7 @@ void RfidDriver::applyPn532I2cSettings()
 bool RfidDriver::configurePn532()
 {
     if (!_i2cHal.lock(hardware::I2C_MUTEX_TIMEOUT_MS)) {
-        Serial.println("[RFID][ERROR] Mutex I2C indisponible");
+        _logger.error(logging::TAG_RFID, "Mutex I2C indisponible lors de la configuration");
         return false;
     }
 
@@ -144,7 +94,7 @@ bool RfidDriver::configurePn532()
 
     if (!_pn532.begin()) {
         _i2cHal.unlock();
-        Serial.println("[RFID][ERROR] PN532 begin() echoue");
+        _logger.error(logging::TAG_RFID, "PN532 begin() a echoue");
         return false;
     }
 
@@ -154,20 +104,19 @@ bool RfidDriver::configurePn532()
     const uint32_t firmwareVersion = _pn532.getFirmwareVersion();
     if (firmwareVersion == 0U) {
         _i2cHal.unlock();
-        Serial.println("[RFID][ERROR] Firmware PN532 non detecte");
+        _logger.error(logging::TAG_RFID, "Firmware PN532 non detecte");
         return false;
     }
 
-    Serial.printf("[RFID] PN532 firmware: 0x%08lX\n", static_cast<unsigned long>(firmwareVersion));
+    _logger.info(logging::TAG_RFID, "PN532 firmware: 0x%08lX", static_cast<unsigned long>(firmwareVersion));
 
     applyPn532I2cSettings();
     if (!_pn532.SAMConfig()) {
         _i2cHal.unlock();
-        Serial.println("[RFID][ERROR] SAMConfig() echoue");
+        _logger.error(logging::TAG_RFID, "SAMConfig() a echoue");
         return false;
     }
 
-    // Armer la première détection passive
     applyPn532I2cSettings();
     _pn532.startPassiveTargetIDDetection(PN532_MIFARE_ISO14443A);
 
@@ -175,7 +124,7 @@ bool RfidDriver::configurePn532()
 
     vTaskDelay(pdMS_TO_TICKS(50U));
 
-    Serial.println("[RFID] PN532 configure et en ecoute passive");
+    _logger.info(logging::TAG_RFID, "PN532 configure et en ecoute passive");
     return true;
 }
 
@@ -184,10 +133,10 @@ constants::ErrorCode RfidDriver::init()
     if (_initialized) return constants::ErrorCode::OK;
 
 #ifdef ESP32_TARGET
-    Serial.println("[RFID] Initialisation I2C...");
+    _logger.info(logging::TAG_RFID, "Initialisation I2C...");
 
     if (!_i2cHal.init(pins::I2C_SDA, pins::I2C_SCL, hardware::I2C_FREQUENCY_HZ)) {
-        Serial.println("[RFID][ERROR] Initialisation I2C echouee");
+        _logger.error(logging::TAG_RFID, "Initialisation I2C echouee");
         return constants::ErrorCode::I2C_BUS_TIMEOUT;
     }
 
@@ -200,9 +149,11 @@ constants::ErrorCode RfidDriver::init()
     attachInterruptArg(pins::PN532_IRQ, &RfidDriver::irqHandler, this, FALLING);
 
     if (!waitForPn532Availability(PN532_DETECTION_TIMEOUT_MS, PN532_DETECTION_POLL_MS)) {
-        Serial.println("[RFID][ERROR] PN532 absent sur I2C");
+        _logger.error(logging::TAG_RFID, "PN532 absent sur le bus I2C");
         return constants::ErrorCode::RFID_FAILURE;
     }
+
+    _logger.info(logging::TAG_RFID, "PN532 detecte a l'adresse I2C 0x24");
 
     if (!configurePn532()) {
         return constants::ErrorCode::RFID_FAILURE;
@@ -238,13 +189,12 @@ void RfidDriver::reset()
     if (configurePn532()) {
         _healthy = true;
         _active = true;
+        _logger.info(logging::TAG_RFID, "PN532 réinitialisé avec succès");
+    } else {
+        _logger.error(logging::TAG_RFID, "Echec de la réinitialisation du PN532");
     }
 #endif
 }
-
-/* ============================================================
- * READ UID (Attente passive via Sémaphore IRQ)
- * ============================================================ */
 
 bool RfidDriver::readUid(uint8_t* uid, uint8_t& uidLength, uint32_t timeoutMs)
 {
@@ -254,24 +204,17 @@ bool RfidDriver::readUid(uint8_t* uid, uint8_t& uidLength, uint32_t timeoutMs)
     }
 
 #ifdef ESP32_TARGET
-    // 1. Attente bloquante sur le sémaphore (ZÉRO trafic I2C pendant l'attente)
     if (xSemaphoreTake(_irqSemaphore, pdMS_TO_TICKS(timeoutMs)) != pdTRUE) {
-        // Timeout : aucun badge présenté.
-        // NE RIEN FAIRE SUR L'I2C : le PN532 continue d'écouter sagement.
         return false;
     }
 
-    // 2. Le GPIO 27 est passé à LOW : le PN532 a un badge prêt dans son buffer !
     if (!_i2cHal.lock(hardware::I2C_MUTEX_TIMEOUT_MS)) {
         return false;
     }
 
     applyPn532I2cSettings();
-
-    // Lecture du résultat déjà prêt (très rapide, ~2 ms)
     const bool success = _pn532.readDetectedPassiveTargetID(uid, &uidLength);
 
-    // Réarmer l'écoute passive pour la prochaine détection
     applyPn532I2cSettings();
     _pn532.startPassiveTargetIDDetection(PN532_MIFARE_ISO14443A);
 
