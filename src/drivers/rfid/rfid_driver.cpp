@@ -219,6 +219,20 @@ bool RfidDriver::configurePn532()
         return false;
     }
 
+    const bool retriesConfigured =
+        _pn532.setPassiveActivationRetries(
+            PN532_PASSIVE_ACTIVATION_RETRIES);
+
+    if (!retriesConfigured) {
+
+        _i2cHal.unlock();
+
+        Serial.println(
+            "[RFID][ERROR] Activation retries echouee");
+
+        return false;
+    }
+
     /*
      * Nombre de tentatives de détection.
      *

@@ -478,7 +478,7 @@ void SystemController::logGpsPosition()
 	_lastGpsLogMs = nowMs;
 
 	const types::GpsData& gps = _gpsService.data();
-	if (!gps.fixValid) {
+	if (!gps.hasLastFix) {
 		_logger.info(logging::TAG_TRACKING,
 					 "GPS: attente fix, mode=%u satellites=%u HDOP=%.2f PDOP=%.2f",
 					 static_cast<unsigned int>(gps.fixMode),
@@ -487,6 +487,14 @@ void SystemController::logGpsPosition()
 	}
 
 	const uint64_t ageMs = nowMs - gps.timestamp;
+	if (!gps.fixValid) {
+		_logger.info(logging::TAG_TRACKING,
+					 "GPS: dernier fix expire, age=%llums lat=%.6f lon=%.6f alt=%.0fm sat=%u HDOP=%.1f PDOP=%.1f",
+					 static_cast<unsigned long long>(ageMs), gps.latitude,
+					 gps.longitude, gps.altitudeMeters,
+					 static_cast<unsigned int>(gps.satellites), gps.hdop, gps.pdop);
+		return;
+	}
 	if (ageMs > gpsStaleAfterMs) {
 		_logger.info(logging::TAG_TRACKING,
 					 "GPS: dernier fix connu, age=%llums lat=%.6f lon=%.6f alt=%.0fm vitesse=%.1fkm/h cap=%.0f sat=%u HDOP=%.1f PDOP=%.1f",

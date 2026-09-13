@@ -1,7 +1,11 @@
 #include "drivers/gps/sim7600_gnss_driver.h"
 
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
+#ifdef ESP32_TARGET
+#include <Arduino.h>
+#endif
 
 #include "config/hardware_config.h"
 #include "utils/default_values.h"
@@ -20,7 +24,7 @@ types::GpsData invalidPosition()
 {
     return {0.0, 0.0, constants::INVALID_ALTITUDE, constants::INVALID_SPEED,
             0.0F, constants::INVALID_DOP, constants::INVALID_DOP,
-            constants::INVALID_SATELLITE_COUNT, 0U, false,
+            constants::INVALID_SATELLITE_COUNT, 0U, false, false,
             utils::Timer::millis()};
 }
 
@@ -66,7 +70,8 @@ bool parseCoordinate(const char* value, char hemisphere, double& result)
 
 Sim7600GnssDriver::Sim7600GnssDriver(Sim7600Driver& modem)
     : _modem(modem), _initialized(false), _healthy(false), _active(false),
-      _gnssEnabled(false)
+    _gnssEnabled(false), _hasReportedFixState(false),
+    _lastReportedFixValid(false)
 {
 }
 
@@ -130,6 +135,9 @@ bool Sim7600GnssDriver::enableGnss()
     char response[96]{};
     _gnssEnabled = sendCommand("AT+CGPS=1", response, sizeof(response),
                                hardware::SIM7600_AT_TIMEOUT_LONG_MS);
+#ifdef ESP32_TARGET
+    Serial.printf("[GPS][DIAG] GNSS %s\n", _gnssEnabled ? "enabled" : "disabled");
+#endif
     _healthy = _gnssEnabled;
     return _gnssEnabled;
 }
@@ -149,21 +157,66 @@ bool Sim7600GnssDriver::readPosition(types::GpsData& position)
     position = invalidPosition();
     if (!isHealthy() || !_gnssEnabled) return false;
     char response[kResponseSize]{};
-    if (!sendCommand("AT+CGNSSINFO", response, sizeof(response),
-                     hardware::SIM7600_GNSS_QUERY_TIMEOUT_MS)) {
+    const uint32_t startMs = utils::Timer::millis();
+    const bool commandOk = sendCommand("AT+CGNSSINFO", response, sizeof(response),
+                                       hardware::SIM7600_GNSS_QUERY_TIMEOUT_MS);
+    const Sim7600Driver::CommandFailure commandFailure = _modem.lastCommandFailure();
+    const uint32_t durationMs = utils::Timer::millis() - startMs;
+#ifdef ESP32_TARGET
+    if (response[0] != '\0') Serial.printf("[GPS][RAW] %s\n", response);
+#endif
+    if (!commandOk) {
+#ifdef ESP32_TARGET
+        const char* reason = "unknown";
+        switch (commandFailure) {
+        case Sim7600Driver::CommandFailure::MUTEX_TIMEOUT: reason = "mutex timeout"; break;
+        case Sim7600Driver::CommandFailure::UART_WRITE: reason = "UART failure"; break;
+        case Sim7600Driver::CommandFailure::ERROR_RESPONSE: reason = "ERROR"; break;
+        case Sim7600Driver::CommandFailure::TIMEOUT: reason = "timeout"; break;
+        default: break;
+        }
+        if (commandFailure == Sim7600Driver::CommandFailure::MUTEX_TIMEOUT) {
+            Serial.printf("[GPS][DIAG] SIM7600 mutex unavailable wait_ms=%u\n",
+                          hardware::SIM7600_UART_MUTEX_TIMEOUT_MS);
+        } else {
+            Serial.printf("[GPS][DIAG] AT+CGNSSINFO failed cause=%s\n", reason);
+        }
+        Serial.printf("[GPS][DIAG] CGNSSINFO duration=%lums result=fail\n",
+                      static_cast<unsigned long>(durationMs));
+#endif
         // Une lecture GNSS peut expirer sans que le modem soit en panne.
         // poll() conserve l'etat de sante base sur la liaison modem.
         return false;
     }
-    return parseCgnssInfo(response, position);
+    const char* failureReason = "unknown";
+    const bool parsed = parseCgnssInfo(response, position, failureReason);
+#ifdef ESP32_TARGET
+    Serial.printf("[GPS][DIAG] CGNSSINFO duration=%lums result=success\n",
+                  static_cast<unsigned long>(durationMs));
+    if (!parsed) {
+        Serial.printf("[GPS][DIAG] CGNSSINFO parse failed reason=%s\n", failureReason);
+    } else if (!_hasReportedFixState || _lastReportedFixValid != position.fixValid) {
+        Serial.printf("[GPS][DIAG] %s fix mode=%u satellites=%u HDOP=%.2f PDOP=%.2f\n",
+                      position.fixValid ? "valid" : "no", position.fixMode,
+                      position.satellites, position.hdop, position.pdop);
+        _hasReportedFixState = true;
+        _lastReportedFixValid = position.fixValid;
+    }
+#endif
+    return parsed;
 }
 
 bool Sim7600GnssDriver::isGnssEnabled()
 {
     char response[96]{};
-    return sendCommand("AT+CGPS?", response, sizeof(response),
-                       hardware::SIM7600_AT_TIMEOUT_LONG_MS) &&
-           std::strstr(response, "+CGPS: 1") != nullptr;
+    const bool commandOk = sendCommand("AT+CGPS?", response, sizeof(response),
+                                       hardware::SIM7600_AT_TIMEOUT_LONG_MS);
+    const bool enabled = commandOk && std::strstr(response, "+CGPS: 1") != nullptr;
+#ifdef ESP32_TARGET
+    if (!commandOk) Serial.printf("[GPS][DIAG] AT+CGPS? failed\n");
+    else Serial.printf("[GPS][DIAG] GNSS %s\n", enabled ? "enabled" : "disabled");
+#endif
+    return enabled;
 }
 
 bool Sim7600GnssDriver::sendCommand(const char* command, char* response,
@@ -173,12 +226,17 @@ bool Sim7600GnssDriver::sendCommand(const char* command, char* response,
 }
 
 bool Sim7600GnssDriver::parseCgnssInfo(const char* response,
-                                       types::GpsData& position) const
+                                       types::GpsData& position,
+                                       const char*& failureReason) const
 {
+    const auto reject = [&failureReason](const char* reason) {
+        failureReason = reason;
+        return false;
+    };
     const char* prefix = std::strstr(response, "+CGNSSINFO:");
-    if (prefix == nullptr) return false;
+    if (prefix == nullptr) return reject("unexpected format");
     const char* cursor = std::strchr(prefix, ':');
-    if (cursor == nullptr) return false;
+    if (cursor == nullptr) return reject("unexpected format");
     ++cursor;
     while (*cursor == ' ') ++cursor;
 
@@ -187,17 +245,17 @@ bool Sim7600GnssDriver::parseCgnssInfo(const char* response,
     std::size_t character = 0U;
     for (; *cursor != '\0' && *cursor != '\r' && *cursor != '\n'; ++cursor) {
         if (*cursor == ',') {
-            if (field + 1U >= kFieldCount) return false;
+            if (field + 1U >= kFieldCount) return reject("field_count");
             fields[field][character] = '\0';
             ++field;
             character = 0U;
             continue;
         }
-        if (character + 1U >= kFieldSize) return false;
+        if (character + 1U >= kFieldSize) return reject("field too long");
         fields[field][character++] = *cursor;
     }
     fields[field][character] = '\0';
-    if (field + 1U != kFieldCount) return false;
+    if (field + 1U != kFieldCount) return reject("field_count");
 
     uint8_t fixMode = 0U;
     uint8_t gpsSatellites = 0U;
@@ -207,31 +265,45 @@ bool Sim7600GnssDriver::parseCgnssInfo(const char* response,
         !parseUnsigned(fields[1], gpsSatellites) ||
         !parseUnsigned(fields[2], glonassSatellites) ||
         !parseUnsigned(fields[3], beidouSatellites)) {
-        return false;
+        return reject("invalid numeric field");
     }
 
     double latitude = 0.0;
     double longitude = 0.0;
     if (!parseCoordinate(fields[4], fields[5][0], latitude) ||
         !parseCoordinate(fields[6], fields[7][0], longitude)) {
-        return false;
+        return reject("invalid latitude/longitude");
+    }
+    if (!std::isfinite(latitude) || !std::isfinite(longitude) ||
+        latitude < -90.0 || latitude > 90.0 ||
+        longitude < -180.0 || longitude > 180.0) {
+        return reject("invalid latitude/longitude");
     }
 
     float altitude = constants::INVALID_ALTITUDE;
     float speedKnots = 0.0F;
-    float heading = 0.0F;
+    float heading = constants::INVALID_DOP;
     float pdop = constants::INVALID_DOP;
     float hdop = constants::INVALID_DOP;
-    if (!parseFloat(fields[10], altitude) || !parseFloat(fields[11], speedKnots) ||
-        !parseFloat(fields[12], heading) || !parseFloat(fields[13], pdop) ||
-        !parseFloat(fields[14], hdop)) {
-        return false;
+    if (!parseFloat(fields[10], altitude) || !parseFloat(fields[11], speedKnots)) {
+        return reject("invalid numeric field");
+    }
+    if (fields[12][0] != '\0' && !parseFloat(fields[12], heading)) {
+        return reject("invalid numeric field");
+    }
+    if (!parseFloat(fields[13], pdop) || !parseFloat(fields[14], hdop)) {
+        return reject("invalid numeric field");
+    }
+    if (!std::isfinite(altitude) || !std::isfinite(speedKnots) ||
+        !std::isfinite(heading) || !std::isfinite(pdop) ||
+        !std::isfinite(hdop)) {
+        return reject("invalid numeric field");
     }
 
     const uint16_t totalSatellites = static_cast<uint16_t>(gpsSatellites) +
         static_cast<uint16_t>(glonassSatellites) +
         static_cast<uint16_t>(beidouSatellites);
-    if (totalSatellites > 255U) return false;
+    if (totalSatellites > 255U) return reject("invalid numeric field");
 
     position.latitude = latitude;
     position.longitude = longitude;

@@ -27,6 +27,15 @@ struct MqttIncomingMessage {
 
 class Sim7600Driver : public interfaces::IDriver {
 public:
+	enum class CommandFailure : uint8_t {
+		NONE,
+		INVALID,
+		MUTEX_TIMEOUT,
+		UART_WRITE,
+		ERROR_RESPONSE,
+		TIMEOUT,
+	};
+
 	Sim7600Driver(hal::UartHal& uartHal, hal::DelayHal& delayHal);
 
 	constants::ErrorCode init() override;
@@ -71,6 +80,7 @@ public:
 							 std::size_t certLen);
 	bool lockTransaction(uint32_t timeoutMs);
 	void unlockTransaction();
+	CommandFailure lastCommandFailure() const;
 
 private:
 	bool sendCommandUntil(const char* command, const char* completionToken,
@@ -89,6 +99,7 @@ private:
 	bool _healthy;
 	bool _active;
 	bool _dataConnected;
+	CommandFailure _lastCommandFailure;
 	MqttIncomingMessage _incomingMessage;
 	uint8_t _incomingParserState;
 	std::size_t _incomingExpected;

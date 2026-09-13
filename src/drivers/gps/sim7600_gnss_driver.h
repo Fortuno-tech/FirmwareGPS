@@ -26,13 +26,16 @@ private:
     bool isGnssEnabled();
     bool sendCommand(const char* command, char* response,
                      std::size_t responseSize, uint32_t timeoutMs);
-    bool parseCgnssInfo(const char* response, types::GpsData& position) const;
+    bool parseCgnssInfo(const char* response, types::GpsData& position,
+                        const char*& failureReason) const;
 
     Sim7600Driver& _modem;
     bool _initialized;
     bool _healthy;
     bool _active;
     bool _gnssEnabled;
+    bool _hasReportedFixState;
+    bool _lastReportedFixValid;
 };
 
 }  // namespace drivers

@@ -16,7 +16,7 @@ namespace drivers {
 
 Sim7600Driver::Sim7600Driver(hal::UartHal& uartHal, hal::DelayHal& delayHal)
 	: _uartHal(uartHal), _delayHal(delayHal), _initialized(false), _healthy(false), _active(false),
-	  _dataConnected(false)
+	  _dataConnected(false), _lastCommandFailure(CommandFailure::NONE)
 #ifdef ESP32_TARGET
 	  , _transactionMutex(xSemaphoreCreateRecursiveMutex())
 #endif
@@ -48,6 +48,11 @@ void Sim7600Driver::unlockTransaction()
 #ifdef ESP32_TARGET
 	if (_transactionMutex != nullptr) xSemaphoreGiveRecursive(_transactionMutex);
 #endif
+}
+
+Sim7600Driver::CommandFailure Sim7600Driver::lastCommandFailure() const
+{
+	return _lastCommandFailure;
 }
 
 constants::ErrorCode Sim7600Driver::init()
@@ -139,11 +144,16 @@ bool Sim7600Driver::sendCommandUntil(const char* command,
 								  const char* completionToken, char* response,
 								  std::size_t responseSize, uint32_t timeoutMs)
 {
+	_lastCommandFailure = CommandFailure::NONE;
 	if (!_initialized || !_active || command == nullptr || response == nullptr ||
 		responseSize < 2U || completionToken == nullptr || completionToken[0] == '\0') {
+		_lastCommandFailure = CommandFailure::INVALID;
 		return false;
 	}
-	if (!lockTransaction(hardware::SIM7600_UART_MUTEX_TIMEOUT_MS)) return false;
+	if (!lockTransaction(hardware::SIM7600_UART_MUTEX_TIMEOUT_MS)) {
+		_lastCommandFailure = CommandFailure::MUTEX_TIMEOUT;
+		return false;
+	}
 
 	drainInput();
 	response[0] = '\0';
@@ -151,6 +161,7 @@ bool Sim7600Driver::sendCommandUntil(const char* command,
 	if (_uartHal.write(reinterpret_cast<const uint8_t*>(command),
 					   commandLength) != commandLength ||
 		_uartHal.write(reinterpret_cast<const uint8_t*>("\r\n"), 2U) != 2U) {
+		_lastCommandFailure = CommandFailure::UART_WRITE;
 		_healthy = false;
 		unlockTransaction();
 		return false;
@@ -174,6 +185,7 @@ bool Sim7600Driver::sendCommandUntil(const char* command,
 			unsigned int err = 0U;
 			if (std::sscanf(cmqttsub, "+CMQTTSUB: %u,%u", &client, &err) == 2) {
 				if (err != 0U) {
+					_lastCommandFailure = CommandFailure::ERROR_RESPONSE;
 					unlockTransaction();
 					return false;
 				}
@@ -185,10 +197,12 @@ bool Sim7600Driver::sendCommandUntil(const char* command,
 		}
 		if (std::strstr(response, "\r\nERROR") != nullptr ||
 			std::strstr(response, "\nERROR") != nullptr) {
+			_lastCommandFailure = CommandFailure::ERROR_RESPONSE;
 			unlockTransaction();
 			return false;
 		}
 	}
+	_lastCommandFailure = CommandFailure::TIMEOUT;
 	unlockTransaction();
 	return false;
 }

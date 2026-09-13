@@ -12,7 +12,7 @@ types::GpsData invalidPosition()
 {
     return {0.0, 0.0, constants::INVALID_ALTITUDE, constants::INVALID_SPEED,
             0.0F, constants::INVALID_DOP, constants::INVALID_DOP,
-            constants::INVALID_SATELLITE_COUNT, 0U, false,
+            constants::INVALID_SATELLITE_COUNT, 0U, false, false,
             utils::Timer::millis()};
 }
 
@@ -51,13 +51,23 @@ bool GpsService::isRunning() const
 
 void GpsService::update()
 {
-    if (!isRunning() ||
-        !utils::Timer::timeout(_lastPollMs, hardware::GNSS_POLL_INTERVAL_MS)) {
+    if (!isRunning()) return;
+
+    const uint32_t nowMs = utils::Timer::millis();
+    if (_data.hasLastFix && _data.fixValid &&
+        nowMs - static_cast<uint32_t>(_data.timestamp) >=
+            hardware::GPS_LAST_FIX_MAX_AGE_MS) {
+        _data.fixValid = false;
+        _data.speedKmh = constants::INVALID_SPEED;
+    }
+
+    if (!utils::Timer::timeout(_lastPollMs, hardware::GNSS_POLL_INTERVAL_MS)) {
         return;
     }
-    _lastPollMs = utils::Timer::millis();
+    _lastPollMs = nowMs;
     types::GpsData position = invalidPosition();
     if (_driver.readPosition(position) && position.fixValid) {
+        position.hasLastFix = true;
         _data = position;
     }
 }

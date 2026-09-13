@@ -3,6 +3,9 @@
 #include <cstdio>
 #include <cstring>
 
+#include "config/hardware_config.h"
+#include "utils/timer_utils.h"
+
 namespace fortico {
 namespace services {
 
@@ -142,15 +145,27 @@ bool PayloadBuilder::gps(const types::TelemetryPacket& packet,
 						 char* output, std::size_t outputSize)
 {
 	char timestamp[32]{};
+	char fixAgeMs[24]{};
 	EscapedContext escaped{};
 	if (!prepareContext(context, escaped) || !writeTimestamp(context, timestamp, sizeof(timestamp))) return false;
+	bool fixUsable = false;
+	if (packet.gps.hasLastFix) {
+		const uint32_t ageMs = utils::Timer::millis() -
+			static_cast<uint32_t>(packet.gps.timestamp);
+		std::snprintf(fixAgeMs, sizeof(fixAgeMs), "%lu",
+				  static_cast<unsigned long>(ageMs));
+		fixUsable = packet.gps.fixValid &&
+			ageMs < hardware::GPS_LAST_FIX_MAX_AGE_MS;
+	} else {
+		std::snprintf(fixAgeMs, sizeof(fixAgeMs), "null");
+	}
 	const int written = std::snprintf(
 		output, outputSize,
-		"{\"deviceId\":\"%s\",\"vehicleId\":\"%s\",\"timestamp\":%s,\"latitude\":%.7f,\"longitude\":%.7f,\"altitude\":%.1f,\"speed\":%.2f,\"course\":%.1f,\"satellites\":%u,\"fix\":%s}",
+		"{\"deviceId\":\"%s\",\"vehicleId\":\"%s\",\"timestamp\":%s,\"latitude\":%.7f,\"longitude\":%.7f,\"altitude\":%.1f,\"speed\":%.2f,\"course\":%.1f,\"satellites\":%u,\"fix\":%s,\"fixAgeMs\":%s}",
 		escaped.deviceId, escaped.vehicleId, timestamp, packet.gps.latitude,
 		packet.gps.longitude, packet.gps.altitudeMeters, packet.gps.speedKmh,
 		packet.gps.headingDeg, static_cast<unsigned int>(packet.gps.satellites),
-		packet.gps.fixValid ? "true" : "false");
+		fixUsable ? "true" : "false", fixAgeMs);
 	return written >= 0 && static_cast<std::size_t>(written) < outputSize;
 }
 
