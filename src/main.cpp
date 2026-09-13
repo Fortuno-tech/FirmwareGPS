@@ -78,11 +78,15 @@ fortico::drivers::RelayDriver g_relayDriver(g_gpioHal);
 fortico::drivers::FuelDriver g_fuelDriver(g_adcHal);
 fortico::drivers::RtcDriver g_rtcDriver(g_i2cHal);
 fortico::drivers::SdDriver g_sdDriver(g_spiHal);
-fortico::drivers::RfidDriver g_rfidDriver(g_i2cHal);
+fortico::hal::SerialLogSink g_serialLogSink;
+fortico::services::SdLogSink g_sdLogSink(g_sdDriver);
+fortico::core::CompositeLogSink g_logSink(g_serialLogSink, g_sdLogSink);
+fortico::core::Logger g_logger;
+fortico::drivers::RfidDriver g_rfidDriver(g_i2cHal, g_logger);
 fortico::drivers::Sim7600Driver g_sim7600(g_uartHal, g_delayHal);
 fortico::drivers::Sim7600PowerDriver g_sim7600PowerDriver(g_gpioHal, g_delayHal);
 fortico::services::Sim7600Service g_sim7600Service(g_sim7600);
-fortico::drivers::Sim7600GnssDriver g_gpsDriver(g_sim7600);
+fortico::drivers::Sim7600GnssDriver g_gpsDriver(g_sim7600, g_logger);
 fortico::services::GpsService g_gpsService(g_gpsDriver);
 
 fortico::core::EventBus g_eventBus;
@@ -98,10 +102,6 @@ fortico::managers::OtaManager g_otaManager(g_otaBackend, g_otaVerifier);
 fortico::managers::RelayManager g_relayManager(g_relayDriver);
 fortico::managers::FuelManager g_fuelManager(g_fuelDriver);
 fortico::core::ErrorHandler g_errorHandler(&g_eventBus);
-fortico::hal::SerialLogSink g_serialLogSink;
-fortico::services::SdLogSink g_sdLogSink(g_sdDriver);
-fortico::core::CompositeLogSink g_logSink(g_serialLogSink, g_sdLogSink);
-fortico::core::Logger g_logger;
 fortico::middleware::CellularMqttClient g_mqttClient(g_sim7600, g_logger);
 fortico::services::MqttPublishQueue g_mqttPublishQueue(g_logger);
 fortico::services::UnavailableTemperatureSensor g_temperatureSensor;
@@ -299,6 +299,7 @@ void handleSerialProvisioning(
                             String rootKeyHex = line.substring(5, idx1);
                             String otaPubKeyHex = line.substring(idx1 + 1, idx2);
                             String deviceId = line.substring(idx2 + 1, idx3);
+                            String vehicleId = deviceId;
                             String clientId = line.substring(idx3 + 1, idx4);
                             String username = line.substring(idx4 + 1, idx5);
                             String password = line.substring(idx5 + 1);
@@ -314,7 +315,9 @@ void handleSerialProvisioning(
                                 strncpy(creds.username, username.c_str(), sizeof(creds.username) - 1);
                                 strncpy(creds.password, password.c_str(), sizeof(creds.password) - 1);
 
-                                if (provisioningService.provisionDevice(rootKey, 32, otaPubKey, 32, creds, deviceId.c_str())) {
+                                if (provisioningService.provisionDevice(
+                                    rootKey, 32, otaPubKey, 32, creds,
+                                    deviceId.c_str(), vehicleId.c_str())) {
                                     Serial.println(F("PROV:OK"));
                                     return;
                                 }

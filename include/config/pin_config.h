@@ -72,13 +72,13 @@ constexpr uint8_t SD_MISO = 19;
 //    GPIO dédiés ; ils ne doivent pas être réutilisés par le modem.
 // ============================================================================
 
-/// PN532 — IRQ optionnel réservé pour un futur mode IRQ-aware
+/// PN532 — IRQ de test, GPIO numérique avec pull-up interne
 ///
 /// Le pilote actuellement utilise la voie I2C pure validée par la librairie
 /// Adafruit PN532, donc ces GPIO ne sont pas requis pour le fonctionnement
 /// courant. Les conserver ici permet d'ouvrir un mode IRQ-aware plus tard
 /// sans modifier la cartographie globale.
-constexpr uint8_t PN532_IRQ = 35;
+constexpr uint8_t PN532_IRQ = 27;
 /// PN532 — reset matériel réservé pour un futur mode IRQ-aware
 constexpr uint8_t PN532_RESET = 26;
 

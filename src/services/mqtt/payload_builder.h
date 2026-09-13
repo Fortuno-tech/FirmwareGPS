@@ -14,6 +14,10 @@ public:
 	static bool telemetry(const types::TelemetryPacket& packet,
 						  char* output, std::size_t outputSize);
 	static bool telemetry(const types::TelemetryPacket& packet,
+						  const char* deviceId, const char* vehicleId,
+						  const char* timestampIso, char* output,
+						  std::size_t outputSize);
+	static bool telemetry(const types::TelemetryPacket& packet,
 						  const MqttDeviceContext& context,
 						  char* output, std::size_t outputSize);
 	static bool gps(const types::TelemetryPacket& packet,

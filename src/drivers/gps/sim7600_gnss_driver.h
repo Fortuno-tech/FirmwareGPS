@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/logger/logger.h"
 #include "drivers/sim7600/sim7600_driver.h"
 #include "interfaces/igps_driver.h"
 
@@ -8,7 +9,7 @@ namespace drivers {
 
 class Sim7600GnssDriver final : public interfaces::IGpsDriver {
 public:
-    explicit Sim7600GnssDriver(Sim7600Driver& modem);
+    Sim7600GnssDriver(Sim7600Driver& modem, core::Logger& logger);
 
     constants::ErrorCode init() override;
     constants::ErrorCode poll() override;
@@ -30,6 +31,7 @@ private:
                         const char*& failureReason) const;
 
     Sim7600Driver& _modem;
+    core::Logger& _logger;
     bool _initialized;
     bool _healthy;
     bool _active;

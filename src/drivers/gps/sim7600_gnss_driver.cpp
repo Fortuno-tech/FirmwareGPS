@@ -68,8 +68,8 @@ bool parseCoordinate(const char* value, char hemisphere, double& result)
 
 }  // namespace
 
-Sim7600GnssDriver::Sim7600GnssDriver(Sim7600Driver& modem)
-    : _modem(modem), _initialized(false), _healthy(false), _active(false),
+Sim7600GnssDriver::Sim7600GnssDriver(Sim7600Driver& modem, core::Logger& logger)
+    : _modem(modem), _logger(logger), _initialized(false), _healthy(false), _active(false),
     _gnssEnabled(false), _hasReportedFixState(false),
     _lastReportedFixValid(false)
 {
@@ -136,7 +136,7 @@ bool Sim7600GnssDriver::enableGnss()
     _gnssEnabled = sendCommand("AT+CGPS=1", response, sizeof(response),
                                hardware::SIM7600_AT_TIMEOUT_LONG_MS);
 #ifdef ESP32_TARGET
-    Serial.printf("[GPS][DIAG] GNSS %s\n", _gnssEnabled ? "enabled" : "disabled");
+    _logger.info(logging::TAG_GPS, "GNSS %s", _gnssEnabled ? "enabled" : "disabled");
 #endif
     _healthy = _gnssEnabled;
     return _gnssEnabled;
@@ -163,7 +163,7 @@ bool Sim7600GnssDriver::readPosition(types::GpsData& position)
     const Sim7600Driver::CommandFailure commandFailure = _modem.lastCommandFailure();
     const uint32_t durationMs = utils::Timer::millis() - startMs;
 #ifdef ESP32_TARGET
-    if (response[0] != '\0') Serial.printf("[GPS][RAW] %s\n", response);
+    if (response[0] != '\0') _logger.debug(logging::TAG_GPS, "RAW %s", response);
 #endif
     if (!commandOk) {
 #ifdef ESP32_TARGET
@@ -176,13 +176,13 @@ bool Sim7600GnssDriver::readPosition(types::GpsData& position)
         default: break;
         }
         if (commandFailure == Sim7600Driver::CommandFailure::MUTEX_TIMEOUT) {
-            Serial.printf("[GPS][DIAG] SIM7600 mutex unavailable wait_ms=%u\n",
-                          hardware::SIM7600_UART_MUTEX_TIMEOUT_MS);
+            _logger.warn(logging::TAG_GPS, "SIM7600 mutex unavailable wait_ms=%u",
+                         hardware::SIM7600_UART_MUTEX_TIMEOUT_MS);
         } else {
-            Serial.printf("[GPS][DIAG] AT+CGNSSINFO failed cause=%s\n", reason);
+            _logger.warn(logging::TAG_GPS, "AT+CGNSSINFO failed cause=%s", reason);
         }
-        Serial.printf("[GPS][DIAG] CGNSSINFO duration=%lums result=fail\n",
-                      static_cast<unsigned long>(durationMs));
+        _logger.warn(logging::TAG_GPS, "CGNSSINFO duration=%lums result=fail",
+                     static_cast<unsigned long>(durationMs));
 #endif
         // Une lecture GNSS peut expirer sans que le modem soit en panne.
         // poll() conserve l'etat de sante base sur la liaison modem.
@@ -191,14 +191,14 @@ bool Sim7600GnssDriver::readPosition(types::GpsData& position)
     const char* failureReason = "unknown";
     const bool parsed = parseCgnssInfo(response, position, failureReason);
 #ifdef ESP32_TARGET
-    Serial.printf("[GPS][DIAG] CGNSSINFO duration=%lums result=success\n",
+    _logger.debug(logging::TAG_GPS, "CGNSSINFO duration=%lums result=success",
                   static_cast<unsigned long>(durationMs));
     if (!parsed) {
-        Serial.printf("[GPS][DIAG] CGNSSINFO parse failed reason=%s\n", failureReason);
+        _logger.debug(logging::TAG_GPS, "CGNSSINFO parse failed reason=%s", failureReason);
     } else if (!_hasReportedFixState || _lastReportedFixValid != position.fixValid) {
-        Serial.printf("[GPS][DIAG] %s fix mode=%u satellites=%u HDOP=%.2f PDOP=%.2f\n",
-                      position.fixValid ? "valid" : "no", position.fixMode,
-                      position.satellites, position.hdop, position.pdop);
+        _logger.info(logging::TAG_GPS, "%s fix mode=%u satellites=%u HDOP=%.2f PDOP=%.2f",
+                     position.fixValid ? "valid" : "no", position.fixMode,
+                     position.satellites, position.hdop, position.pdop);
         _hasReportedFixState = true;
         _lastReportedFixValid = position.fixValid;
     }
@@ -213,8 +213,8 @@ bool Sim7600GnssDriver::isGnssEnabled()
                                        hardware::SIM7600_AT_TIMEOUT_LONG_MS);
     const bool enabled = commandOk && std::strstr(response, "+CGPS: 1") != nullptr;
 #ifdef ESP32_TARGET
-    if (!commandOk) Serial.printf("[GPS][DIAG] AT+CGPS? failed\n");
-    else Serial.printf("[GPS][DIAG] GNSS %s\n", enabled ? "enabled" : "disabled");
+    if (!commandOk) _logger.warn(logging::TAG_GPS, "AT+CGPS? failed");
+    else _logger.debug(logging::TAG_GPS, "GNSS %s", enabled ? "enabled" : "disabled");
 #endif
     return enabled;
 }

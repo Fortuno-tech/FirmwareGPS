@@ -152,6 +152,7 @@ constexpr uint32_t    SCHEDULER_TASK_STACK_WORDS = 6144;
 
 constexpr UBaseType_t RFID_TASK_PRIORITY = 2;
 constexpr uint32_t    RFID_TASK_STACK_WORDS = 4096;
+constexpr uint8_t      QUEUE_LEN_RFID_RESULT = 4;
 
 // ============================================================================
 // Files (queues) — tailles de référence — Document 07 §3

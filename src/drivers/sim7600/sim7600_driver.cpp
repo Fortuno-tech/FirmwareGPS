@@ -542,13 +542,19 @@ bool Sim7600Driver::getNetworkDateTime(RtcDateTime& dateTime)
 	const char* timeText = std::strchr(response, '"');
 	char timezoneSign = '\0';
 	unsigned int timezoneQuarters = 0U;
-	if (timeText == nullptr || std::sscanf(timeText + 1, "%u/%u/%u,%u:%u:%u%c%u",
-					&year, &month, &day, &hour, &minute, &second,
-					&timezoneSign, &timezoneQuarters) != 8 ||
-		(timezoneSign != '+' && timezoneSign != '-') || timezoneQuarters > 96U) {
-		#ifdef ESP32_TARGET
-		Serial.printf("[WARN][RTC] timestamp UTC indisponible: CCLK timezone absent/invalide response=%s\n", response);
-		#endif
+	if (timeText == nullptr) return false;
+	const int fieldsWithTimezone = std::sscanf(
+		timeText + 1, "%u/%u/%u,%u:%u:%u%c%u",
+		&year, &month, &day, &hour, &minute, &second,
+		&timezoneSign, &timezoneQuarters);
+	if (fieldsWithTimezone != 8) {
+		const int fieldsWithoutTimezone = std::sscanf(
+			timeText + 1, "%u/%u/%u,%u:%u:%u",
+			&year, &month, &day, &hour, &minute, &second);
+		if (fieldsWithoutTimezone != 6) return false;
+		timezoneSign = '+';
+		timezoneQuarters = 0U;
+	} else if ((timezoneSign != '+' && timezoneSign != '-') || timezoneQuarters > 96U) {
 		return false;
 	}
 	RtcDateTime value{

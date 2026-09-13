@@ -243,6 +243,8 @@ void SystemController::update()
 
 	const uint64_t rfidStartMs = utils::Timer::millis();
 	_rfidService.update();
+	services::RfidService::Result rfidResult{};
+	const bool hasRfidResult = _rfidService.receiveResult(rfidResult);
 
 	// Synchronisation de l'état du relais et du carburant dans le service de télémétrie
 	_telemetryService.setRelay(_relayManager.state());
@@ -250,7 +252,7 @@ void SystemController::update()
 
 	// Traitement de l'authentification chauffeur par RFID
 	const types::AuthenticationDecision decision = _authenticationService.decision();
-	if (decision.timestamp != 0U &&
+	if (hasRfidResult && decision.timestamp != 0U &&
 		decision.timestamp != _lastAuthenticationTimestamp) {
 		_lastAuthenticationTimestamp = decision.timestamp;
 		const bool isAuthorized = (decision.result == types::AuthenticationResult::AUTHORIZED);
@@ -438,7 +440,8 @@ BootStage SystemController::bootStage() const { return _bootStage; }
 void SystemController::setBootStage(BootStage stage, const char* message)
 {
 	_bootStage = stage;
-	_logger.info(logging::TAG_SYSTEM_CONTROLLER, "%s", message);
+	_logger.info(logging::TAG_SYSTEM_CONTROLLER, "boot stage=%u: %s",
+				 static_cast<unsigned int>(stage), message);
 }
 
 bool SystemController::failBoot(const char* message, constants::ErrorCode error)

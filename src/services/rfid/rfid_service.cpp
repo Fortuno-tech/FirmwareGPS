@@ -5,463 +5,236 @@
 #include <cstring>
 
 #include "config/hardware_config.h"
+#include "config/task_config.h"
 #include "constants/events.h"
 #include "utils/timer_utils.h"
 
 namespace fortico {
 namespace services {
 
-/* ============================================================
- * CONSTRUCTEUR
- * ============================================================ */
-
 RfidService::RfidService(
     interfaces::IRfidDriver& driver,
     AuthenticationService& authentication,
     interfaces::IPublisher& publisher)
-
     : _driver(driver)
     , _authentication(authentication)
     , _publisher(publisher)
-
     , _running(false)
-
     , _lastUid{}
     , _lastUidLength(0U)
     , _cardPresent(false)
-
     , _nextPollMs(0U)
-
     , _updateCount(0U)
     , _uidCount(0U)
     , _readFailureCount(0U)
+    , _resultQueue(nullptr)
+    , _taskHandle(nullptr)
+    , _taskRunning(false)
 {
 }
 
-
-/* ============================================================
- * START
- * ============================================================ */
-
 bool RfidService::start()
 {
-    Serial.println(
-        "[RFID] Demarrage service RFID...");
+    Serial.println("[RFID] Demarrage service RFID...");
 
-    /*
-     * Initialisation driver.
-     */
-    if (_driver.init() !=
-        constants::ErrorCode::OK) {
-
-        Serial.println(
-            "[RFID][ERROR] Driver RFID init echouee");
-
+    if (_driver.init() != constants::ErrorCode::OK) {
+        Serial.println("[RFID][ERROR] Driver RFID init echouee");
         return false;
     }
 
-    /*
-     * Authentication service.
-     */
     if (!_authentication.isRunning()) {
-
         if (!_authentication.start()) {
-
-            Serial.println(
-                "[RFID][ERROR] AuthenticationService start echoue");
-
+            Serial.println("[RFID][ERROR] AuthenticationService start echoue");
             return false;
         }
     }
 
-    /*
-     * Start driver.
-     */
     if (!_driver.start()) {
+        Serial.println("[RFID][ERROR] RfidDriver start echoue");
+        return false;
+    }
 
-        Serial.println(
-            "[RFID][ERROR] RfidDriver start echoue");
+    _resultQueue = xQueueCreate(tasks::QUEUE_LEN_RFID_RESULT, sizeof(Result));
+    if (_resultQueue == nullptr) {
+        _driver.stop();
+        return false;
+    }
 
+    _taskRunning = true;
+    if (xTaskCreatePinnedToCore(&RfidService::taskEntry, "RfidServiceTask",
+                                tasks::RFID_TASK_STACK_WORDS, this,
+                                tasks::RFID_TASK_PRIORITY, &_taskHandle,
+                                tasks::CORE_APP_CRITICAL) != pdTRUE) {
+        _taskRunning = false;
+        vQueueDelete(_resultQueue);
+        _resultQueue = nullptr;
+        _driver.stop();
         return false;
     }
 
     _running = true;
-
-    _nextPollMs =
-        utils::Timer::millis();
-
-    _updateCount = 0U;
-    _uidCount = 0U;
-    _readFailureCount = 0U;
-    _nextPollMs = utils::Timer::millis();
-
     clearUid();
 
-    Serial.println(
-        "[RFID] Service RFID demarre");
-
+    Serial.println("[RFID] Service RFID demarre");
     return true;
 }
 
-
-/* ============================================================
- * STOP
- * ============================================================ */
-
 void RfidService::stop()
 {
+    _taskRunning = false;
+    if (_taskHandle != nullptr) {
+        vTaskDelete(_taskHandle);
+        _taskHandle = nullptr;
+    }
     _driver.stop();
-
     _running = false;
 
     clearUid();
+    if (_resultQueue != nullptr) {
+        vQueueDelete(_resultQueue);
+        _resultQueue = nullptr;
+    }
 
-    Serial.println(
-        "[RFID] Service RFID arrete");
+    Serial.println("[RFID] Service RFID arrete");
 }
-
-
-/* ============================================================
- * IS RUNNING
- * ============================================================ */
 
 bool RfidService::isRunning() const
 {
-    return _running &&
-           _driver.isHealthy();
+    return _running && _driver.isHealthy();
 }
-
-
-/* ============================================================
- * UPDATE
- * ============================================================ */
 
 void RfidService::update()
 {
-    if (!_running) {
-        return;
+}
+
+bool RfidService::receiveResult(Result& result)
+{
+    return _resultQueue != nullptr &&
+        xQueueReceive(_resultQueue, &result, 0U) == pdTRUE;
+}
+
+void RfidService::taskEntry(void* context)
+{
+    static_cast<RfidService*>(context)->runTask();
+}
+
+void RfidService::runTask()
+{
+    while (_taskRunning) {
+        pollDriver();
+        vTaskDelay(pdMS_TO_TICKS(10U));
     }
+    _taskHandle = nullptr;
+    vTaskDelete(nullptr);
+}
 
-    const uint32_t nowMs =
-        utils::Timer::millis();
-
-    /*
-     * Respect de la période RFID.
-     *
-     * Quand aucun badge n'est présent, on applique un cooldown pour
-     * éviter de relancer la lecture PN532 en boucle à chaque tick.
-     */
-    if (nowMs < _nextPollMs) {
-        return;
-    }
-
-    _nextPollMs = nowMs + hardware::RFID_POLL_INTERVAL_MS;
+void RfidService::pollDriver()
+{
+    if (!_running) return;
 
     ++_updateCount;
-
-    /*
-     * Vérification driver.
-     */
-    if (_driver.poll() !=
-        constants::ErrorCode::OK) {
-
-        return;
-    }
 
     uint8_t uid[16]{};
     uint8_t uidLength = 0U;
 
-    /*
-     * Lecture UID.
-     */
-    const bool uidAvailable =
-        _driver.readUid(
-            uid,
-            uidLength,
-            hardware::RFID_READ_TIMEOUT_MS);
-
-    /*
-     * ========================================================
-     * AUCUN BADGE
-     * ========================================================
-     *
-     * Ce n'est PAS une erreur.
-     *
-     * Si un badge était présent auparavant,
-     * on considère qu'il vient d'être retiré.
-     */
+    // Attente passive de 500 ms sur l'interruption IRQ (0% trafic I2C tant qu'aucun badge n'est là)
+    const bool uidAvailable = _driver.readUid(uid, uidLength, 500U);
 
     if (!uidAvailable) {
-
         if (_cardPresent) {
-
-            Serial.println(
-                "[RFID] Badge retire");
-
+            Serial.println("[RFID] Badge retire");
             clearUid();
         }
-
-        /*
-         * Une lecture sans badge doit être tolérée, mais pas retriée
-         * à chaque tick. On ajoute un backoff progressif pour éviter de
-         * relancer requestFrom() en boucle lorsque le PN532 ne répond pas.
-         */
-        // Absence de badge : état normal, sans backoff ni erreur I2C.
-        _readFailureCount = 0U;
-
         return;
     }
 
-    _readFailureCount = 0U;
-
-    /*
-     * Vérification longueur.
-     */
-    if (uidLength == 0U ||
-        uidLength > sizeof(uid)) {
-
+    if (uidLength == 0U || uidLength > sizeof(uid)) {
         return;
     }
 
     ++_uidCount;
 
-    /*
-     * ========================================================
-     * MÊME BADGE
-     * ========================================================
-     *
-     * Le badge est toujours devant le lecteur.
-     *
-     * On ne renvoie pas une nouvelle authentification.
-     */
-
-    if (_cardPresent &&
-        isSameUid(uid, uidLength)) {
-
-        _readFailureCount = 0U;
+    // Anti-rebond si le même badge reste posé
+    if (_cardPresent && isSameUid(uid, uidLength)) {
         return;
     }
 
-    /*
-     * ========================================================
-     * NOUVEAU BADGE
-     * ========================================================
-     */
+    char formattedUid[sizeof(_lastUid) * 3U]{};
+    formatUid(uid, uidLength, formattedUid, sizeof(formattedUid));
 
-    char formattedUid[
-        sizeof(_lastUid) * 3U
-    ]{};
+    Serial.print("[RFID] Nouveau badge : ");
+    Serial.println(formattedUid);
 
-    formatUid(
-        uid,
-        uidLength,
-        formattedUid,
-        sizeof(formattedUid));
+    const uint64_t timestamp = utils::Timer::millis();
+    const bool authorized = _authentication.authenticate(formattedUid, timestamp);
 
-    Serial.print(
-        "[RFID] Nouveau badge : ");
+    Result result{};
+    std::strncpy(result.uid, formattedUid, sizeof(result.uid) - 1U);
+    result.authorized = authorized;
+    result.authenticationResult = authorized
+        ? types::AuthenticationResult::AUTHORIZED
+        : types::AuthenticationResult::DENIED;
+    result.timestamp = timestamp;
 
-    Serial.println(
-        formattedUid);
+    if (_resultQueue != nullptr) {
+        xQueueSend(_resultQueue, &result, 0U);
+    }
 
-    /*
-     * Timestamp.
-     */
-    const uint64_t timestamp =
-        utils::Timer::millis();
-
-    /*
-     * EventBus.
-     */
     _publisher.publish({
         constants::EventID::RFID_CARD_READ,
         timestamp,
         0U
     });
 
-    /*
-     * Authentification.
-     */
-    const bool authorized =
-        _authentication.authenticate(
-            formattedUid,
-            timestamp);
-
     if (authorized) {
-
-        Serial.println(
-            "[RFID] Authentification : AUTORISEE");
-
+        Serial.println("[RFID] Authentification : AUTORISEE");
     } else {
-
-        Serial.println(
-            "[RFID] Authentification : REFUSEE");
+        Serial.println("[RFID] Authentification : REFUSEE");
     }
 
-    /*
-     * Mémorisation UID.
-     */
-    rememberUid(
-        uid,
-        uidLength);
+    rememberUid(uid, uidLength);
 }
 
+uint32_t RfidService::updateCount() const { return _updateCount; }
+uint32_t RfidService::uidCount() const { return _uidCount; }
+uint32_t RfidService::readFailureCount() const { return _readFailureCount; }
 
-/* ============================================================
- * COMPTEUR UPDATE
- * ============================================================ */
-
-uint32_t RfidService::updateCount() const
+bool RfidService::isSameUid(const uint8_t* uid, uint8_t length) const
 {
-    return _updateCount;
+    if (uid == nullptr || length != _lastUidLength) return false;
+    return std::memcmp(uid, _lastUid, length) == 0;
 }
 
-
-/* ============================================================
- * COMPTEUR UID
- * ============================================================ */
-
-uint32_t RfidService::uidCount() const
+void RfidService::rememberUid(const uint8_t* uid, uint8_t length)
 {
-    return _uidCount;
-}
-
-
-/* ============================================================
- * COMPTEUR ERREURS
- * ============================================================ */
-
-uint32_t RfidService::readFailureCount() const
-{
-    return _readFailureCount;
-}
-
-
-/* ============================================================
- * COMPARER UID
- * ============================================================ */
-
-bool RfidService::isSameUid(
-    const uint8_t* uid,
-    uint8_t length) const
-{
-    if (uid == nullptr) {
-        return false;
-    }
-
-    if (length != _lastUidLength) {
-        return false;
-    }
-
-    return std::memcmp(
-               uid,
-               _lastUid,
-               length) == 0;
-}
-
-
-/* ============================================================
- * MEMORISER UID
- * ============================================================ */
-
-void RfidService::rememberUid(
-    const uint8_t* uid,
-    uint8_t length)
-{
-    if (uid == nullptr ||
-        length == 0U ||
-        length > sizeof(_lastUid)) {
-
-        return;
-    }
-
-    std::memset(
-        _lastUid,
-        0,
-        sizeof(_lastUid));
-
-    std::memcpy(
-        _lastUid,
-        uid,
-        length);
-
+    if (uid == nullptr || length == 0U || length > sizeof(_lastUid)) return;
+    std::memset(_lastUid, 0, sizeof(_lastUid));
+    std::memcpy(_lastUid, uid, length);
     _lastUidLength = length;
-
     _cardPresent = true;
 }
 
-
-/* ============================================================
- * EFFACER UID
- * ============================================================ */
-
 void RfidService::clearUid()
 {
-    std::memset(
-        _lastUid,
-        0,
-        sizeof(_lastUid));
-
+    std::memset(_lastUid, 0, sizeof(_lastUid));
     _lastUidLength = 0U;
-
     _cardPresent = false;
 }
 
-
-/* ============================================================
- * FORMAT UID
- * ============================================================ */
-
-void RfidService::formatUid(
-    const uint8_t* uid,
-    uint8_t length,
-    char* output,
-    uint8_t outputSize)
+void RfidService::formatUid(const uint8_t* uid, uint8_t length, char* output, uint8_t outputSize)
 {
-    if (uid == nullptr ||
-        output == nullptr ||
-        outputSize == 0U) {
-
-        return;
-    }
-
+    if (uid == nullptr || output == nullptr || outputSize == 0U) return;
     output[0] = '\0';
-
     uint8_t offset = 0U;
-
-    for (uint8_t index = 0U;
-         index < length;
-         ++index) {
-
-        if (offset >= outputSize) {
-            break;
-        }
-
-        const int written =
-            std::snprintf(
-                output + offset,
-                outputSize - offset,
-                "%s%02X",
-                (index == 0U) ? "" : ":",
-                uid[index]);
-
-        if (written < 0) {
-
-            output[0] = '\0';
+    for (uint8_t index = 0U; index < length; ++index) {
+        if (offset >= outputSize) break;
+        const int written = std::snprintf(output + offset, outputSize - offset,
+                                          "%s%02X", (index == 0U) ? "" : ":", uid[index]);
+        if (written < 0 || static_cast<uint8_t>(written) >= (outputSize - offset)) {
+            output[outputSize - 1U] = '\0';
             return;
         }
-
-        if (static_cast<uint8_t>(written) >=
-            (outputSize - offset)) {
-
-            output[outputSize - 1U] =
-                '\0';
-
-            return;
-        }
-
-        offset +=
-            static_cast<uint8_t>(written);
+        offset += static_cast<uint8_t>(written);
     }
 }
 
