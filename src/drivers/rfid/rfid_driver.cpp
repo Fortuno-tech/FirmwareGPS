@@ -38,6 +38,7 @@ RfidDriver::RfidDriver(hal::I2cHal& i2cHal)
     , _resultUid{}
     , _resultUidLength(0U)
     , _resultAvailable(false)
+    , _resultCardPresent(false)
 #endif
 
     , _initialized(false)
@@ -533,18 +534,34 @@ bool RfidDriver::start()
 
 #ifdef ESP32_TARGET
 
-    /*
-     * Le polling RFID est désormais déclenché explicitement par le service,
-     * donc on n'active pas de tâche permanente qui relancerait le PN532
-     * en boucle sans badge.
-     */
     _active = true;
-    _taskRunning = false;
+    _taskRunning = true;
     _taskStarted = false;
     _taskHandle = nullptr;
+    _lastReadAttemptMs = 0U;
 
-    Serial.println(
-        "[RFID] Polling RFID active sur demande explicite");
+    if (_resultMutex == nullptr) {
+        _resultMutex = xSemaphoreCreateMutex();
+    }
+    _resultUidLength = 0U;
+    _resultAvailable = false;
+    _resultCardPresent = false;
+    if (_resultMutex == nullptr ||
+        xTaskCreatePinnedToCore(
+            &RfidDriver::taskEntry,
+            "RfidTask",
+            tasks::RFID_TASK_STACK_WORDS,
+            this,
+            tasks::RFID_TASK_PRIORITY,
+            &_taskHandle,
+            tasks::CORE_APP_CRITICAL) != pdTRUE) {
+        _taskRunning = false;
+        _taskHandle = nullptr;
+        _active = false;
+        return false;
+    }
+
+    Serial.println("[RFID] Polling RFID asynchrone active");
 
     return true;
 
@@ -700,22 +717,21 @@ bool RfidDriver::readUid(
 
 #ifdef ESP32_TARGET
 
-    if (!_i2cHal.lock(
-            hardware::I2C_MUTEX_TIMEOUT_MS)) {
-
+    (void)timeoutMs;
+    if (_resultMutex == nullptr ||
+        xSemaphoreTake(_resultMutex, 0U) != pdTRUE) {
         return false;
     }
 
-    applyPn532I2cSettings();
-    const bool result = _pn532.readPassiveTargetID(
-        PN532_MIFARE_ISO14443A,
-        uid,
-        &uidLength,
-        static_cast<uint16_t>(timeoutMs));
-    _i2cHal.native().setTimeOut(hardware::I2C_TRANSACTION_MAX_MS);
-    _i2cHal.unlock();
+    const bool available = _resultAvailable;
+    const bool cardPresent = _resultCardPresent;
+    if (available && cardPresent && uid != nullptr) {
+        std::memcpy(uid, _resultUid, sizeof(_resultUid));
+        uidLength = _resultUidLength;
+    }
+    xSemaphoreGive(_resultMutex);
 
-    return result && uidLength > 0U && uidLength <= 16U;
+    return available && cardPresent && uidLength > 0U && uidLength <= 16U;
 
 #else
 
@@ -775,32 +791,19 @@ void RfidDriver::runTask()
         /*
          * Lecture réelle du PN532.
          */
-        if (readHardwareUid(
-                uid,
-                uidLength)) {
+        const bool cardPresent = readHardwareUid(uid, uidLength);
 
-            if (_resultMutex != nullptr) {
+        if (_resultMutex != nullptr) {
+            if (xSemaphoreTake(_resultMutex, pdMS_TO_TICKS(10U)) == pdTRUE) {
 
-                if (xSemaphoreTake(
-                        _resultMutex,
-                        pdMS_TO_TICKS(10U)) == pdTRUE) {
+                std::memcpy(_resultUid, uid, sizeof(_resultUid));
+                _resultUidLength = cardPresent ? uidLength : 0U;
+                _resultCardPresent = cardPresent;
+                _resultAvailable = true;
 
-                    /*
-                     * Copie UID.
-                     */
-                    std::memcpy(
-                        _resultUid,
-                        uid,
-                        sizeof(_resultUid));
+                xSemaphoreGive(_resultMutex);
 
-                    _resultUidLength =
-                        uidLength;
-
-                    _resultAvailable = true;
-
-                    xSemaphoreGive(
-                        _resultMutex);
-
+                if (cardPresent) {
                     /*
                      * DEBUG UID
                      */

@@ -118,6 +118,7 @@ private:
     uint8_t _resultUid[16];
     uint8_t _resultUidLength;
     bool _resultAvailable;
+    bool _resultCardPresent;
 
 #endif
 
