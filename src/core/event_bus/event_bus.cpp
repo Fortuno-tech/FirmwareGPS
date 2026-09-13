@@ -226,6 +226,10 @@ const char* EventBus::eventIdToTopic(constants::EventID id) {
         case EventID::OTA_SUCCEEDED:           return "ota_succeeded";
         case EventID::SYSTEM_SELFTEST_PASSED:  return "system_selftest_passed";
         case EventID::SYSTEM_FAULT:            return "system_fault";
+        case EventID::REMOTE_STOP_COMMAND:     return "remote_stop_command";
+        case EventID::REMOTE_KILL_COMMAND:     return "remote_kill_command";
+        case EventID::SOS_ACK_RECEIVED:        return "sos_ack_received";
+        case EventID::BADGE_REMOVED:           return "badge_removed";
         default:                               return "unknown";
     }
 }

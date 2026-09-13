@@ -46,19 +46,27 @@ SystemController::SystemController(
 	  _lastAuthenticationTimestamp(0U), _lastGpsLogMs(0U),
 	  _lastAlertTimestamp(0U), _lastAlertCode(types::AlertCode::DIAGNOSTIC_WARNING),
 	  _hasProcessedAlert(false), _lastBatteryLogMs(0U), _lastStatusPublishMs(0U),
-	  _lastPublishedRelayState(types::RelayState::LOCKED), _relayStateKnown(false)
+	  _lastPublishedRelayState(types::RelayState::LOCKED), _relayStateKnown(false),
+	  _systemState(types::SystemState::BOOT), _isOffline(false),
+	  _lastOfflineRetryMs(0U), _lastGpsMqttPublishMs(0U), _killLocked(false),
+	  _firstInternetConnected(false)
 {
 }
 
 bool SystemController::init()
 {
 	if (_initialized) return true;
-	setBootStage(BootStage::Starting, "initialisation des composants Fortico");
+	setBootStage(BootStage::InitHardware, "INIT_HARDWARE: initialisation des composants");
+	_systemState = types::SystemState::INIT_HARDWARE;
 	if (!_eventBus.init()) {
+		_alertManager.setPattern(managers::AlertPattern::ERROR);
+		transitionTo(types::SystemState::ERROR);
 		return failBoot("initialisation EventBus impossible",
 						constants::ErrorCode::UNKNOWN);
 	}
 	if (!_powerMonitor.init()) {
+		_alertManager.setPattern(managers::AlertPattern::ERROR);
+		transitionTo(types::SystemState::ERROR);
 		return failBoot("initialisation mesure batterie impossible",
 						constants::ErrorCode::BATTERY_SENSOR_FAILURE);
 	}
@@ -67,6 +75,8 @@ bool SystemController::init()
 	_relayManager.init();
 	if (_fuelDriver.init() != constants::ErrorCode::OK ||
 		_rtcDriver.init() != constants::ErrorCode::OK) {
+		_alertManager.setPattern(managers::AlertPattern::ERROR);
+		transitionTo(types::SystemState::ERROR);
 		return failBoot("initialisation driver fuel ou RTC impossible",
 						constants::ErrorCode::UNKNOWN);
 	}
@@ -77,16 +87,32 @@ bool SystemController::init()
 					 static_cast<int>(sdInitResult));
 	}
 	if (!_securityService.start()) {
+		_alertManager.setPattern(managers::AlertPattern::ERROR);
+		transitionTo(types::SystemState::ERROR);
 		return failBoot("initialisation stockage securise impossible",
 						constants::ErrorCode::NVS_READ_FAILED);
 	}
 	if (!_storageService.start()) {
 		_securityService.stop();
+		_alertManager.setPattern(managers::AlertPattern::ERROR);
+		transitionTo(types::SystemState::ERROR);
 		return failBoot("initialisation service de stockage impossible",
 						constants::ErrorCode::NVS_READ_FAILED);
 	}
 	_alertManager.init();
 	_alertManager.subscribeTo(_eventBus);
+
+	// Souscriptions EventBus pour le flux de contrôle
+	_eventBus.subscribe(constants::EventID::SOS_BUTTON_PRESSED, this);
+	_eventBus.subscribe(constants::EventID::REMOTE_STOP_COMMAND, this);
+	_eventBus.subscribe(constants::EventID::REMOTE_KILL_COMMAND, this);
+	_eventBus.subscribe(constants::EventID::SOS_ACK_RECEIVED, this);
+	_eventBus.subscribe(constants::EventID::NETWORK_LOST, this);
+	_eventBus.subscribe(constants::EventID::NETWORK_CONNECTED, this);
+	_eventBus.subscribe(constants::EventID::BATTERY_LOW, this);
+	_eventBus.subscribe(constants::EventID::FUEL_ANOMALY, this);
+	_eventBus.subscribe(constants::EventID::BADGE_REMOVED, this);
+
 	_initialized = true;
 	return true;
 }
@@ -94,7 +120,7 @@ bool SystemController::init()
 bool SystemController::start()
 {
 	if (!_initialized || _running) return _running;
-	setBootStage(BootStage::Starting, "demarrage des services Fortico");
+	setBootStage(BootStage::StartingServices, "demarrage des services Fortico");
 	if (!_authenticationService.start()) {
 		return failBoot("demarrage authentification impossible",
 						constants::ErrorCode::UNKNOWN);
@@ -110,95 +136,63 @@ bool SystemController::start()
 		return failBoot("demarrage diagnostics impossible",
 						constants::ErrorCode::UNKNOWN);
 	}
-	setBootStage(BootStage::PoweringModem, "impulsion K/PWRKEY SIM7600");
-	if (_sim7600PowerDriver.init() != constants::ErrorCode::OK ||
-		!_sim7600PowerDriver.start() || !_sim7600PowerDriver.powerOn()) {
-		failBoot("echec du controle K/PWRKEY SIM7600",
-				 constants::ErrorCode::MODEM_AT_TIMEOUT);
-		_authenticationService.stop();
-		_diagnosticsService.stop();
-		_telemetryService.stop();
-		return false;
+	setBootStage(BootStage::PoweringModem, "CONNECT_NETWORK: impulsion K/PWRKEY SIM7600");
+	if (_sim7600PowerDriver.init() == constants::ErrorCode::OK &&
+		_sim7600PowerDriver.start()) {
+		_sim7600PowerDriver.powerOn();
 	}
-	setBootStage(BootStage::InitializingModem, "handshake AT SIM7600");
-	if (!_sim7600Service.start()) {
-		failBoot("SIM7600 ne repond pas aux commandes AT",
-				 constants::ErrorCode::MODEM_AT_TIMEOUT);
-		_sim7600PowerDriver.stop();
-		_authenticationService.stop();
-		_diagnosticsService.stop();
-		_telemetryService.stop();
-		return false;
+
+	setBootStage(BootStage::InitializingModem, "CONNECT_NETWORK: initialisation modem");
+	_sim7600Service.start();
+
+	// Délai pour laisser à la carte SIM le temps de charger et stabiliser
+	_logger.info(logging::TAG_SIM7600,
+	             "Attente du chargement et stabilisation de la carte SIM (%u ms)...",
+	             static_cast<unsigned int>(hardware::SIM_READY_SETTLE_DELAY_MS));
+	delay(hardware::SIM_READY_SETTLE_DELAY_MS);
+
+	setBootStage(BootStage::InitializingGnss, "CONNECT_NETWORK: activation du GNSS SIM7600");
+	_gpsService.start();
+
+	setBootStage(BootStage::RegisteringNetwork, "CONNECT_NETWORK: enregistrement reseau mobile");
+	const bool netOk = _sim7600Service.waitForNetwork(
+			network::MODEM_NETWORK_REGISTRATION_TIMEOUT_MS) &&
+		_sim7600Service.connectInternet(
+			network::APN_DEFAULT, network::MODEM_PDP_CONTEXT_TIMEOUT_MS);
+
+	if (netOk) {
+		_logger.info(logging::TAG_SYSTEM_CONTROLLER, "Connexion 4G etablie avec succes");
+		// Synchronisation RTC au tout premier accès internet
+		synchronizeRtcFromNetwork();
+		_firstInternetConnected = true;
+		_lastNetworkTimeSyncMs = utils::Timer::millis();
+		_lastStatusPublishMs = 0U;
+		logSim7600Diagnostics();
+
+		setBootStage(BootStage::ConnectingMqtt, "CONNECT_NETWORK: connexion MQTT HiveMQ TLS");
+		types::MqttCredentials credentials{};
+		if (_securityService.loadMqttCredentials(credentials) &&
+			_mqttClient.setCredentials(credentials) &&
+			_mqttClient.connect(network::MQTT_BROKER_HOST, network::MQTT_BROKER_PORT)) {
+			_isOffline = false;
+			_logger.info(logging::TAG_MQTT, "Connexion MQTT etablie avec succes");
+		} else {
+			_isOffline = true;
+			_logger.warn(logging::TAG_SYSTEM_CONTROLLER,
+						 "Echec MQTT -> Mode OFFLINE active (Buffer SD, retry 30s)");
+		}
+	} else {
+		_isOffline = true;
+		_logger.warn(logging::TAG_SYSTEM_CONTROLLER,
+					 "Enregistrement reseau 4G impossible -> Mode OFFLINE active (Buffer SD, retry 30s)");
 	}
-	setBootStage(BootStage::InitializingGnss, "activation du GNSS SIM7600");
-	if (!_gpsService.start()) {
-		failBoot("activation GNSS impossible", constants::ErrorCode::GNSS_TIMEOUT);
-		_sim7600Service.stop();
-		_sim7600PowerDriver.stop();
-		_authenticationService.stop();
-		_diagnosticsService.stop();
-		_telemetryService.stop();
-		return false;
-	}
-	setBootStage(BootStage::RegisteringNetwork, "enregistrement reseau mobile");
-	if (!_sim7600Service.waitForNetwork(
-			network::MODEM_NETWORK_REGISTRATION_TIMEOUT_MS) ||
-		!_sim7600Service.connectInternet(
-			network::APN_DEFAULT, network::MODEM_PDP_CONTEXT_TIMEOUT_MS)) {
-		failBoot("enregistrement reseau ou contexte PDP impossible",
-				 constants::ErrorCode::MODEM_REGISTRATION_FAILED);
-		_gpsService.stop();
-		_sim7600Service.stop();
-		_sim7600PowerDriver.stop();
-		_authenticationService.stop();
-		_diagnosticsService.stop();
-		_telemetryService.stop();
-		return false;
-	}
-	// Première mise à l'heure dès que le contexte de données est disponible.
-	// Les vérifications suivantes sont faites périodiquement dans update().
-	synchronizeRtcFromNetwork();
-	_lastNetworkTimeSyncMs = utils::Timer::millis();
-	_lastStatusPublishMs = 0U;
-	logSim7600Diagnostics();
-	setBootStage(BootStage::ConnectingMqtt, "connexion MQTT cellulaire");
-	types::MqttCredentials credentials{};
-	if (!_securityService.loadMqttCredentials(credentials) ||
-		!_mqttClient.setCredentials(credentials) ||
-		!_mqttClient.connect(network::MQTT_BROKER_HOST, network::MQTT_BROKER_PORT)) {
-		failBoot("connexion MQTT impossible", constants::ErrorCode::MQTT_CONNECT_FAILED);
-		_gpsService.stop();
-		_sim7600Service.stop();
-		_sim7600PowerDriver.stop();
-		_authenticationService.stop();
-		_diagnosticsService.stop();
-		_telemetryService.stop();
-		return false;
-	}
+
 	setBootStage(BootStage::StartingServices, "demarrage RFID et EventBus");
 	if (!_rfidService.start()) {
-		_mqttClient.disconnect();
-		_gpsService.stop();
-		_sim7600Service.stop();
-		_sim7600PowerDriver.stop();
-		_authenticationService.stop();
-		_diagnosticsService.stop();
-		_telemetryService.stop();
-		return failBoot("demarrage RFID impossible", constants::ErrorCode::UNKNOWN);
+		_logger.warn(logging::TAG_SYSTEM_CONTROLLER, "demarrage RFID en cours");
 	}
-	_logger.info(logging::TAG_SYSTEM_CONTROLLER,
-				 "RfidTask demarrage demande");
-	if (!_eventBus.start()) {
-		_rfidService.stop();
-		_mqttClient.disconnect();
-		_gpsService.stop();
-		_sim7600Service.stop();
-		_sim7600PowerDriver.stop();
-		_authenticationService.stop();
-		_diagnosticsService.stop();
-		_telemetryService.stop();
-		return failBoot("demarrage EventBus impossible", constants::ErrorCode::UNKNOWN);
-	}
+	_eventBus.start();
+
 	if (!_relayDriver.start() || !_fuelDriver.start() || !_rtcDriver.start()) {
 		stop();
 		return failBoot("demarrage driver relais, fuel ou RTC impossible",
@@ -213,15 +207,16 @@ bool SystemController::start()
 					 "journal SD actif: /fortico.log");
 	}
 
-	// Étape initiale : le relais maintient le moteur coupé par défaut.
+	// Étape initiale : le relais maintient le moteur coupé par défaut
 	_relayManager.submit({types::RelayCmd::CUT, types::RelaySource::AUTH, utils::Timer::millis()});
 	_telemetryService.setActiveTracking(false);
+	transitionTo(types::SystemState::WAIT_BADGE);
+	_alertManager.setPattern(managers::AlertPattern::WAIT_BADGE);
 	_logger.info(logging::TAG_SYSTEM_CONTROLLER,
-				 "ETAPE INITIALE : Moteur verrouille (relais coupe). En attente du badge chauffeur...");
+				 "ETAPE WAIT_BADGE : Moteur verrouille (relais coupe). En attente du badge chauffeur (LED jaune clignotante)...");
 
 	_running = true;
-	_lastNetworkTimeSyncMs = utils::Timer::millis();
-	setBootStage(BootStage::Ready, "Fortico operationnel");
+	setBootStage(BootStage::Ready, "Fortico operationnel - WAIT_BADGE");
 	return true;
 }
 
@@ -240,7 +235,6 @@ void SystemController::update()
 
 	_gpsService.update();
 	logGpsPosition();
-
 	const uint64_t rfidStartMs = utils::Timer::millis();
 	_rfidService.update();
 	services::RfidService::Result rfidResult{};
@@ -250,39 +244,104 @@ void SystemController::update()
 	_telemetryService.setRelay(_relayManager.state());
 	_telemetryService.setFuel(_fuelManager.getLevel());
 
-	// Traitement de l'authentification chauffeur par RFID
+	// Traitement selon la Machine à États Fortico (FSM)
 	const types::AuthenticationDecision decision = _authenticationService.decision();
-	if (hasRfidResult && decision.timestamp != 0U &&
-		decision.timestamp != _lastAuthenticationTimestamp) {
-		_lastAuthenticationTimestamp = decision.timestamp;
-		const bool isAuthorized = (decision.result == types::AuthenticationResult::AUTHORIZED);
-		drivers::RtcDateTime rfidEventTime{};
-		const bool rfidTimeValid = _rtcDriver.readDateTime(rfidEventTime);
-		_telemetryService.publishRfid(
-			decision.uid, isAuthorized, rfidTimeValid ? &rfidEventTime : nullptr);
+	const bool hasNewDecision = (hasRfidResult && decision.timestamp != 0U &&
+								 decision.timestamp != _lastAuthenticationTimestamp);
 
-		if (isAuthorized) {
-			// Badge vérifié avec succès : moteur autorisé par le relais et passage à l'étape de suivi actif
-			_relayManager.submit({types::RelayCmd::ENGAGE, types::RelaySource::AUTH, decision.timestamp});
-			_telemetryService.setAuthentication(decision.result);
-			_telemetryService.setActiveTracking(true);
-			_logger.info(logging::TAG_SYSTEM_CONTROLLER,
-						 "CHAUFFEUR VERIFIE (UID: %s). Moteur autorise par le relais. Passage a l'etape suivante : suivi GPS et MQTT actives.",
-						 decision.uid);
-			// Notification MQTT immédiate pour le déblocage moteur
-			if (_mqttClient.connected()) {
-				_telemetryService.forcePublish();
-			}
-		} else {
-			// Badge non reconnu ou non autorisé : moteur maintenu coupé, alerte déclenchée
-			_relayManager.submit({types::RelayCmd::CUT, types::RelaySource::AUTH, decision.timestamp});
-			_telemetryService.setAuthentication(decision.result);
-			_telemetryService.setActiveTracking(false);
-			_alertManager.raise(types::AlertCode::AUTH_DENIED, types::AlertSeverity::MEDIUM, decision.timestamp);
-			_logger.warn(logging::TAG_SYSTEM_CONTROLLER,
-						 "CHAUFFEUR NON RECONNU (UID: %s). Moteur maintenu coupe par le relais. Alerte emise.",
-						 decision.uid);
+	if (_systemState == types::SystemState::WAIT_BADGE) {
+		_relayManager.submit({types::RelayCmd::CUT, types::RelaySource::AUTH, utils::Timer::millis()});
+		_telemetryService.setActiveTracking(false);
+		if (_alertManager.pattern() != managers::AlertPattern::WAIT_BADGE) {
+			_alertManager.setPattern(managers::AlertPattern::WAIT_BADGE);
 		}
+
+		if (hasNewDecision) {
+			_lastAuthenticationTimestamp = decision.timestamp;
+			const bool isAuthorized = (decision.result == types::AuthenticationResult::AUTHORIZED);
+			drivers::RtcDateTime rfidEventTime{};
+			const bool rfidTimeValid = _rtcDriver.readDateTime(rfidEventTime);
+			_telemetryService.publishRfid(
+				decision.uid, isAuthorized, rfidTimeValid ? &rfidEventTime : nullptr);
+
+			if (isAuthorized) {
+				transitionTo(types::SystemState::TRACKING_ACTIVE);
+				_relayManager.submit({types::RelayCmd::ENGAGE, types::RelaySource::AUTH, decision.timestamp});
+				_telemetryService.setAuthentication(decision.result);
+				_telemetryService.setActiveTracking(true);
+				_alertManager.setPattern(managers::AlertPattern::TRACKING_OK);
+				_logger.info(logging::TAG_SYSTEM_CONTROLLER,
+							 "CHAUFFEUR VERIFIE (UID: %s). Moteur autorise par le relais -> TRACKING_ACTIVE ✅",
+							 decision.uid);
+				if (_mqttClient.connected()) {
+					_telemetryService.forcePublish();
+				}
+			} else {
+				transitionTo(types::SystemState::ALARM_STATE);
+				_relayManager.submit({types::RelayCmd::CUT, types::RelaySource::AUTH, decision.timestamp});
+				_telemetryService.setAuthentication(decision.result);
+				_telemetryService.setActiveTracking(false);
+				_alertManager.raise(types::AlertCode::AUTH_DENIED, types::AlertSeverity::MEDIUM, decision.timestamp);
+				_logger.warn(logging::TAG_SYSTEM_CONTROLLER,
+							 "CHAUFFEUR NON RECONNU (UID: %s). Moteur coupe -> ALARM_STATE 🔊 (Buzzer 60s, LED rouge rapide)",
+							 decision.uid);
+				if (_mqttClient.connected()) {
+					_telemetryService.forcePublish();
+				}
+			}
+		}
+	} else if (_systemState == types::SystemState::ALARM_STATE) {
+		_relayManager.submit({types::RelayCmd::CUT, types::RelaySource::AUTH, utils::Timer::millis()});
+		_telemetryService.setActiveTracking(false);
+
+		// Bon badge présenté pendant l'alarme ?
+		if (hasNewDecision) {
+			_lastAuthenticationTimestamp = decision.timestamp;
+			const bool isAuthorized = (decision.result == types::AuthenticationResult::AUTHORIZED);
+			if (isAuthorized) {
+				_logger.info(logging::TAG_SYSTEM_CONTROLLER,
+							 "BON BADGE PRESENTE PENDANT L'ALARME (UID: %s) -> Passage a TRACKING_ACTIVE ✅",
+							 decision.uid);
+				_alertManager.stopAlarm();
+				transitionTo(types::SystemState::TRACKING_ACTIVE);
+				_relayManager.submit({types::RelayCmd::ENGAGE, types::RelaySource::AUTH, decision.timestamp});
+				_telemetryService.setAuthentication(decision.result);
+				_telemetryService.setActiveTracking(true);
+				_alertManager.setPattern(managers::AlertPattern::TRACKING_OK);
+				if (_mqttClient.connected()) {
+					_telemetryService.forcePublish();
+				}
+			}
+		}
+
+		// Fin des 60s sans bon badge ?
+		if (_alertManager.isAlarmTimedOut()) {
+			_logger.info(logging::TAG_SYSTEM_CONTROLLER,
+						 "Fin d'alarme (60s) sans badge valide -> Retour a WAIT_BADGE");
+			_alertManager.stopAlarm();
+			transitionTo(types::SystemState::WAIT_BADGE);
+		}
+	} else if (_systemState == types::SystemState::TRACKING_ACTIVE) {
+		if (!_killLocked) {
+			_relayManager.submit({types::RelayCmd::ENGAGE, types::RelaySource::AUTH, utils::Timer::millis()});
+		}
+
+		// Retrait de badge / coupure de contact
+		if (hasNewDecision) {
+			_lastAuthenticationTimestamp = decision.timestamp;
+			_logger.info(logging::TAG_SYSTEM_CONTROLLER,
+						 "BADGE PRESENTE EN SUIVI ACTIF (UID: %s) -> Coupure moteur -> WAIT_BADGE",
+						 decision.uid);
+			_relayManager.submit({types::RelayCmd::CUT, types::RelaySource::AUTH, decision.timestamp});
+			_telemetryService.setActiveTracking(false);
+			transitionTo(types::SystemState::WAIT_BADGE);
+		}
+	} else if (_systemState == types::SystemState::SOS_STATE) {
+		_relayManager.submit({types::RelayCmd::CUT, types::RelaySource::BUTTON_SOS, utils::Timer::millis()});
+		_telemetryService.setActiveTracking(false);
+	} else if (_systemState == types::SystemState::ENGINE_KILL) {
+		_relayManager.submit({types::RelayCmd::EMERGENCY_CUT, types::RelaySource::REMOTE_COMMAND, utils::Timer::millis()});
+		_telemetryService.setActiveTracking(false);
 	}
 
 	const uint64_t rfidElapsedMs = utils::Timer::millis() - rfidStartMs;
@@ -329,10 +388,20 @@ void SystemController::update()
 	}
 
 	const uint64_t nowMs = utils::Timer::millis();
-	if (nowMs - _lastNetworkTimeSyncMs >=
-		hardware::NETWORK_TIME_SYNC_INTERVAL_MS) {
-		synchronizeRtcFromNetwork();
-		_lastNetworkTimeSyncMs = nowMs;
+	if (_sim7600Service.isDataConnected()) {
+		if (!_firstInternetConnected) {
+			synchronizeRtcFromNetwork();
+			_firstInternetConnected = true;
+			_lastNetworkTimeSyncMs = nowMs;
+		} else if (nowMs - _lastNetworkTimeSyncMs >=
+			hardware::NETWORK_TIME_SYNC_INTERVAL_MS) {
+			synchronizeRtcFromNetwork();
+			_lastNetworkTimeSyncMs = nowMs;
+		}
+	}
+
+	if (_isOffline) {
+		handleOfflineRetry();
 	}
 
 	_alertManager.update();
@@ -474,8 +543,8 @@ void SystemController::logSim7600Diagnostics()
 
 void SystemController::logGpsPosition()
 {
-	constexpr uint64_t gpsLogIntervalMs = 5000U;
-	constexpr uint64_t gpsStaleAfterMs = 3000U;
+	constexpr uint64_t gpsLogIntervalMs = 10000U;
+	constexpr uint64_t gpsStaleAfterMs = 25000U;
 	const uint64_t nowMs = utils::Timer::millis();
 	if (nowMs - _lastGpsLogMs < gpsLogIntervalMs) return;
 	_lastGpsLogMs = nowMs;
@@ -483,7 +552,7 @@ void SystemController::logGpsPosition()
 	const types::GpsData& gps = _gpsService.data();
 	if (!gps.hasLastFix) {
 		_logger.info(logging::TAG_TRACKING,
-					 "GPS: attente fix, mode=%u satellites=%u HDOP=%.2f PDOP=%.2f",
+					 "GPS (10s): attente fix, mode=%u satellites=%u HDOP=%.2f PDOP=%.2f",
 					 static_cast<unsigned int>(gps.fixMode),
 					 static_cast<unsigned int>(gps.satellites), gps.hdop, gps.pdop);
 		return;
@@ -492,7 +561,7 @@ void SystemController::logGpsPosition()
 	const uint64_t ageMs = nowMs - gps.timestamp;
 	if (!gps.fixValid) {
 		_logger.info(logging::TAG_TRACKING,
-					 "GPS: dernier fix expire, age=%llums lat=%.6f lon=%.6f alt=%.0fm sat=%u HDOP=%.1f PDOP=%.1f",
+					 "GPS (10s): dernier fix expire, age=%llums lat=%.6f lon=%.6f alt=%.0fm sat=%u HDOP=%.1f PDOP=%.1f",
 					 static_cast<unsigned long long>(ageMs), gps.latitude,
 					 gps.longitude, gps.altitudeMeters,
 					 static_cast<unsigned int>(gps.satellites), gps.hdop, gps.pdop);
@@ -500,7 +569,7 @@ void SystemController::logGpsPosition()
 	}
 	if (ageMs > gpsStaleAfterMs) {
 		_logger.info(logging::TAG_TRACKING,
-					 "GPS: dernier fix connu, age=%llums lat=%.6f lon=%.6f alt=%.0fm vitesse=%.1fkm/h cap=%.0f sat=%u HDOP=%.1f PDOP=%.1f",
+					 "GPS (10s): dernier fix connu, age=%llums lat=%.6f lon=%.6f alt=%.0fm vitesse=%.1fkm/h cap=%.0f sat=%u HDOP=%.1f PDOP=%.1f",
 					 static_cast<unsigned long long>(ageMs), gps.latitude,
 					 gps.longitude, gps.altitudeMeters, gps.speedKmh,
 					 gps.headingDeg, static_cast<unsigned int>(gps.satellites),
@@ -509,7 +578,7 @@ void SystemController::logGpsPosition()
 	}
 
 	_logger.info(logging::TAG_TRACKING,
-				 "GPS: fix=%u lat=%.6f lon=%.6f alt=%.0fm vitesse=%.1fkm/h cap=%.0f sat=%u HDOP=%.1f PDOP=%.1f",
+				 "GPS (10s): fix=%u lat=%.6f lon=%.6f alt=%.0fm vitesse=%.1fkm/h cap=%.0f sat=%u HDOP=%.1f PDOP=%.1f",
 				 static_cast<unsigned int>(gps.fixMode), gps.latitude,
 				 gps.longitude, gps.altitudeMeters, gps.speedKmh, gps.headingDeg,
 				 static_cast<unsigned int>(gps.satellites), gps.hdop, gps.pdop);
@@ -530,6 +599,135 @@ void SystemController::synchronizeRtcFromNetwork()
 	} else {
 		_logger.warn(logging::TAG_SYSTEM_CONTROLLER,
 					 "ecriture de l'heure reseau dans le RTC impossible");
+	}
+}
+
+types::SystemState SystemController::systemState() const
+{
+	return _systemState;
+}
+
+void SystemController::transitionTo(types::SystemState newState)
+{
+	if (_systemState == newState) return;
+	_logger.info(logging::TAG_SYSTEM_CONTROLLER,
+				 "FSM TRANSITION : etat %u -> %u",
+				 static_cast<unsigned int>(_systemState),
+				 static_cast<unsigned int>(newState));
+	_systemState = newState;
+}
+
+void SystemController::onEvent(const types::Event& event)
+{
+	switch (event.id) {
+		case constants::EventID::SOS_BUTTON_PRESSED:
+			_logger.warn(logging::TAG_SYSTEM_CONTROLLER,
+						 "EVENEMENT : Bouton SOS presse -> Passage a SOS_STATE 🆘");
+			transitionTo(types::SystemState::SOS_STATE);
+			_relayManager.submit({types::RelayCmd::CUT, types::RelaySource::BUTTON_SOS, event.timestamp});
+			_telemetryService.setActiveTracking(false);
+			_alertManager.setPattern(managers::AlertPattern::SOS);
+			if (_mqttClient.connected()) {
+				_telemetryService.forcePublish();
+			}
+			break;
+
+		case constants::EventID::REMOTE_STOP_COMMAND:
+			_logger.info(logging::TAG_SYSTEM_CONTROLLER,
+						 "EVENEMENT : Commande MQTT STOP -> WAIT_BADGE (Moteur coupe)");
+			transitionTo(types::SystemState::WAIT_BADGE);
+			_relayManager.submit({types::RelayCmd::CUT, types::RelaySource::REMOTE_COMMAND, event.timestamp});
+			_telemetryService.setActiveTracking(false);
+			_alertManager.setPattern(managers::AlertPattern::WAIT_BADGE);
+			break;
+
+		case constants::EventID::REMOTE_KILL_COMMAND:
+			_logger.warn(logging::TAG_SYSTEM_CONTROLLER,
+						 "EVENEMENT : Commande MQTT KILL -> ENGINE_KILL (Moteur verrouille coupe)");
+			_killLocked = true;
+			transitionTo(types::SystemState::ENGINE_KILL);
+			_relayManager.submit({types::RelayCmd::EMERGENCY_CUT, types::RelaySource::REMOTE_COMMAND, event.timestamp});
+			_telemetryService.setActiveTracking(false);
+			break;
+
+		case constants::EventID::SOS_ACK_RECEIVED:
+			_logger.info(logging::TAG_SYSTEM_CONTROLLER,
+						 "EVENEMENT : Commande MQTT SOS_ACK -> Desactivation SOS");
+			if (_systemState == types::SystemState::SOS_STATE) {
+				_alertManager.clear();
+				transitionTo(types::SystemState::WAIT_BADGE);
+			}
+			break;
+
+		case constants::EventID::NETWORK_LOST:
+			_logger.warn(logging::TAG_SYSTEM_CONTROLLER,
+						 "EVENEMENT : Perte reseau -> Mode OFFLINE active");
+			_isOffline = true;
+			break;
+
+		case constants::EventID::NETWORK_CONNECTED:
+			_logger.info(logging::TAG_SYSTEM_CONTROLLER,
+						 "EVENEMENT : Reseau connecte");
+			_isOffline = false;
+			if (!_firstInternetConnected) {
+				synchronizeRtcFromNetwork();
+				_firstInternetConnected = true;
+			}
+			break;
+
+		case constants::EventID::BATTERY_LOW:
+			_logger.warn(logging::TAG_SYSTEM_CONTROLLER,
+						 "EVENEMENT : Batterie < 10%% critique");
+			break;
+
+		case constants::EventID::FUEL_ANOMALY:
+			_logger.warn(logging::TAG_SYSTEM_CONTROLLER,
+						 "EVENEMENT : Anomalie carburant (vol suspecte)");
+			break;
+
+		case constants::EventID::BADGE_REMOVED:
+			if (_systemState == types::SystemState::TRACKING_ACTIVE) {
+				_logger.info(logging::TAG_SYSTEM_CONTROLLER,
+							 "EVENEMENT : Retrait badge -> WAIT_BADGE");
+				_relayManager.submit({types::RelayCmd::CUT, types::RelaySource::AUTH, event.timestamp});
+				_telemetryService.setActiveTracking(false);
+				transitionTo(types::SystemState::WAIT_BADGE);
+			}
+			break;
+
+		default:
+			break;
+	}
+}
+
+void SystemController::handleOfflineRetry()
+{
+	const uint64_t nowMs = utils::Timer::millis();
+	if (nowMs - _lastOfflineRetryMs < hardware::OFFLINE_RETRY_INTERVAL_MS) return;
+	_lastOfflineRetryMs = nowMs;
+
+	_logger.info(logging::TAG_SYSTEM_CONTROLLER,
+				 "Tentative de reconnexion cellulaire/MQTT en arriere-plan (retry 30s)...");
+
+	if (!_sim7600Service.isDataConnected()) {
+		_sim7600Service.connectInternet(network::APN_DEFAULT, network::MODEM_PDP_CONTEXT_TIMEOUT_MS);
+	}
+
+	if (_sim7600Service.isDataConnected()) {
+		if (!_firstInternetConnected) {
+			synchronizeRtcFromNetwork();
+			_firstInternetConnected = true;
+			_lastNetworkTimeSyncMs = nowMs;
+		}
+		types::MqttCredentials credentials{};
+		if (_securityService.loadMqttCredentials(credentials) &&
+			_mqttClient.setCredentials(credentials) &&
+			_mqttClient.connect(network::MQTT_BROKER_HOST, network::MQTT_BROKER_PORT)) {
+			_isOffline = false;
+			_logger.info(logging::TAG_SYSTEM_CONTROLLER,
+						 "RECONNEXION REUSSIE : Modem et MQTT connectes ! Rejoindre TRACKING.");
+			_telemetryService.forcePublish();
+		}
 	}
 }
 

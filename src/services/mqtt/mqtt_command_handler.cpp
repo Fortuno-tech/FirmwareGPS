@@ -16,11 +16,17 @@ MqttCommandHandler::MqttCommandHandler(
     TelemetryService& telemetryService, const GpsService& gpsService,
     const Sim7600Service& simService, const drivers::SdDriver& sdDriver,
     const middleware::CellularMqttClient& mqttClient,
-    const drivers::RtcDriver& rtcDriver, core::Logger& logger)
+    const drivers::RtcDriver& rtcDriver, core::Logger& logger,
+    core::EventBus* eventBus)
     : _queue(queue), _relayManager(relayManager),
       _telemetryService(telemetryService), _gpsService(gpsService),
       _simService(simService), _sdDriver(sdDriver), _mqttClient(mqttClient),
-      _rtcDriver(rtcDriver), _logger(logger) {}
+      _rtcDriver(rtcDriver), _logger(logger), _eventBus(eventBus) {}
+
+void MqttCommandHandler::setEventBus(core::EventBus* eventBus)
+{
+    _eventBus = eventBus;
+}
 
 bool MqttCommandHandler::extractString(const char* json, std::size_t length,
                                        const char* key, char* output,
@@ -90,15 +96,35 @@ void MqttCommandHandler::handle(const drivers::MqttIncomingMessage& message)
     bool success = false;
     const char* error = "UNKNOWN_COMMAND";
     const uint64_t timestamp = _rtcDriver.timestamp();
-    if (std::strcmp(command, "ENGINE_OFF") == 0) {
+    if (std::strcmp(command, "STOP") == 0 || std::strcmp(command, "ENGINE_OFF") == 0) {
         success = _relayManager.submit({types::RelayCmd::CUT,
                                         types::RelaySource::REMOTE_COMMAND,
                                         timestamp});
+        _telemetryService.setActiveTracking(false);
+        if (_eventBus != nullptr) {
+            _eventBus->publish({constants::EventID::REMOTE_STOP_COMMAND, timestamp, 0U});
+        }
         error = success ? nullptr : "ENGINE_OFF_REJECTED";
+    } else if (std::strcmp(command, "KILL") == 0) {
+        success = _relayManager.submit({types::RelayCmd::EMERGENCY_CUT,
+                                        types::RelaySource::REMOTE_COMMAND,
+                                        timestamp});
+        _telemetryService.setActiveTracking(false);
+        if (_eventBus != nullptr) {
+            _eventBus->publish({constants::EventID::REMOTE_KILL_COMMAND, timestamp, 0U});
+        }
+        error = success ? nullptr : "KILL_REJECTED";
+    } else if (std::strcmp(command, "SOS_ACK") == 0) {
+        if (_eventBus != nullptr) {
+            _eventBus->publish({constants::EventID::SOS_ACK_RECEIVED, timestamp, 0U});
+        }
+        success = true;
+        error = nullptr;
     } else if (std::strcmp(command, "ENGINE_ON") == 0) {
         success = _relayManager.submit({types::RelayCmd::ENGAGE,
                                         types::RelaySource::REMOTE_COMMAND,
                                         timestamp});
+        _telemetryService.setActiveTracking(true);
         error = success ? nullptr : "ENGINE_ON_REJECTED";
     } else if (std::strcmp(command, "GET_STATUS") == 0) {
         success = _telemetryService.publishStatus(

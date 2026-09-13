@@ -27,25 +27,28 @@
 #include "services/sim7600/sim7600_service.h"
 #include "services/storage/storage_service.h"
 #include "services/telemetry/telemetry_service.h"
+#include "interfaces/ievent_listener.h"
 #include "types/alert_types.h"
+#include "types/system_types.h"
 
 namespace fortico {
 namespace app {
 
 enum class BootStage : uint8_t {
 	Idle,
-	Starting,
+	CheckProvisioning,
+	InitHardware,
+	StartingServices,
 	PoweringModem,
 	InitializingModem,
 	InitializingGnss,
 	RegisteringNetwork,
 	ConnectingMqtt,
-	StartingServices,
 	Ready,
 	Failed,
 };
 
-class SystemController {
+class SystemController : public interfaces::IEventListener {
 public:
 	SystemController(core::EventBus& eventBus,
 					 managers::AlertManager& alertManager,
@@ -75,11 +78,14 @@ public:
 		bool start();
 		void update();
 		void stop();
+		void onEvent(const types::Event& event) override;
 		bool isInitialized() const;
 		bool isRunning() const;
 		core::PowerState powerState() const;
 		bool hasFault() const;
 		BootStage bootStage() const;
+		types::SystemState systemState() const;
+		void transitionTo(types::SystemState newState);
 
 private:
 	core::EventBus& _eventBus;
@@ -123,6 +129,13 @@ private:
 	types::RelayState _lastPublishedRelayState;
 	bool _relayStateKnown;
 
+	types::SystemState _systemState;
+	bool _isOffline;
+	uint64_t _lastOfflineRetryMs;
+	uint64_t _lastGpsMqttPublishMs;
+	bool _killLocked;
+	bool _firstInternetConnected;
+
 	void setBootStage(BootStage stage, const char* message);
 	bool failBoot(const char* message, constants::ErrorCode error);
 	void logSim7600Diagnostics();
@@ -130,6 +143,7 @@ private:
 	void logBatteryStatus();
 	void processAlerts();
 	void synchronizeRtcFromNetwork();
+	void handleOfflineRetry();
 };
 
 }  // namespace app

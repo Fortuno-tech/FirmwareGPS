@@ -13,6 +13,16 @@
 namespace fortico {
 namespace managers {
 
+enum class AlertPattern : uint8_t {
+	OFF,
+	HALT,
+	ERROR,
+	WAIT_BADGE,
+	ALARM_FAST,
+	SOS,
+	TRACKING_OK,
+};
+
 class AlertManager : public interfaces::IManager,
 					  public interfaces::IEventListener {
 public:
@@ -32,6 +42,11 @@ public:
 	types::AlertEvent pendingAlert() const;
 	void clear();
 
+	void setPattern(AlertPattern pattern);
+	AlertPattern pattern() const;
+	bool isAlarmTimedOut() const;
+	void stopAlarm();
+
 private:
 	drivers::ButtonDriver& _button;
 	drivers::BuzzerDriver& _buzzer;
@@ -41,6 +56,10 @@ private:
 	bool _eventPending;
 	types::Event _pendingEvent;
 	types::AlertEvent _pending;
+	AlertPattern _pattern;
+	uint64_t _patternTimerMs;
+	uint64_t _alarmStartTimeMs;
+	bool _ledState;
 };
 
 }  // namespace managers

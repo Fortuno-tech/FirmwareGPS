@@ -129,7 +129,7 @@ fortico::services::TelemetryService g_telemetryService(
      &g_temperatureSensor);
 fortico::services::MqttCommandHandler g_mqttCommandHandler(
     g_mqttPublishQueue, g_relayManager, g_telemetryService, g_gpsService,
-    g_sim7600Service, g_sdDriver, g_mqttClient, g_rtcDriver, g_logger);
+    g_sim7600Service, g_sdDriver, g_mqttClient, g_rtcDriver, g_logger, &g_eventBus);
 fortico::services::MqttPublishTask g_mqttPublishTask(
     g_mqttPublishQueue, g_mqttClient, g_logger, g_mqttCommandHandler);
 fortico::app::Application g_application(
@@ -399,6 +399,24 @@ void setup()
                       "ajout du badge RFID par defaut impossible");
     }
     handleSerialProvisioning(provisioningService, g_storageService);
+
+    if (!provisioningService.isProvisioned()) {
+        g_logger.error(fortico::logging::TAG_SYSTEM_CONTROLLER,
+                       "ETAT HALT : Boitier non provisionne (cles OTA/MQTT manquantes). Moteur coupe, LED rouge clignotante...");
+        g_relayDriver.init();
+        g_relayDriver.cut();
+        g_alertManager.init();
+        g_alertManager.setPattern(fortico::managers::AlertPattern::HALT);
+
+        while (!provisioningService.isProvisioned()) {
+            g_alertManager.update();
+            handleSerialProvisioning(provisioningService, g_storageService);
+            g_delayHal.waitMs(100U);
+        }
+        g_logger.info(fortico::logging::TAG_SYSTEM_CONTROLLER,
+                      "Provisionnement effectue avec succes ! Poursuite du demarrage...");
+        g_alertManager.clear();
+    }
 
     g_securityService.start();
 

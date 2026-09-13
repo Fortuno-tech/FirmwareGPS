@@ -6,6 +6,7 @@
 #include "drivers/sim7600/sim7600_driver.h"
 #include "managers/relay_manager/relay_manager.h"
 #include "middleware/mqtt_client/cellular_mqtt_client.h"
+#include "core/event_bus/event_bus.h"
 #include "services/gps/gps_service.h"
 #include "services/mqtt/mqtt_publish_queue.h"
 #include "services/sim7600/sim7600_service.h"
@@ -24,8 +25,10 @@ public:
                        const drivers::SdDriver& sdDriver,
                        const middleware::CellularMqttClient& mqttClient,
                        const drivers::RtcDriver& rtcDriver,
-                       core::Logger& logger);
+                       core::Logger& logger,
+                       core::EventBus* eventBus = nullptr);
 
+    void setEventBus(core::EventBus* eventBus);
     void handle(const drivers::MqttIncomingMessage& message);
 
 private:
@@ -44,6 +47,7 @@ private:
     const middleware::CellularMqttClient& _mqttClient;
     const drivers::RtcDriver& _rtcDriver;
     core::Logger& _logger;
+    core::EventBus* _eventBus;
 };
 
 }  // namespace services

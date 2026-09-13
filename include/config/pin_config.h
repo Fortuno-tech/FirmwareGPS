@@ -103,8 +103,11 @@ constexpr uint8_t RELAY_CTRL = 12;
 
 /// Buzzer d'alarme cabine
 constexpr uint8_t BUZZER_SIGNAL = 13;
-/// LED témoin d'état système
+/// LED témoin d'état système (LED rouge principale d'alerte/erreur/halt)
 constexpr uint8_t LED_INDICATOR = 33;
+constexpr uint8_t LED_RED = 33;
+/// LED témoin secondaire (LED jaune d'attente badge / veille / auxiliaire, GPIO 2 interne ESP32)
+constexpr uint8_t LED_YELLOW = 2;
 
 // ============================================================================
 // 8. Entrée utilisateur — Bouton poussoir (alerte SOS)
