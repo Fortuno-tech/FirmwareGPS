@@ -15,6 +15,7 @@ public:
     bool connect(const char* host, uint16_t port) override;
     bool publish(const char* topic, const void* payload,
                  std::size_t length) override;
+    bool pollIncoming(drivers::MqttIncomingMessage& message);
     void disconnect() override;
     bool connected() const;
 
@@ -23,6 +24,7 @@ private:
                         const char* urcPrefix) const;
     void releaseResources();
     void resetModemMqttStack();
+    bool subscribeCommands();
 
     drivers::Sim7600Driver& _modem;
 	core::Logger& _logger;
@@ -31,6 +33,7 @@ private:
     bool _connected;
 	bool _serviceStarted;
 	bool _clientAcquired;
+    bool _subscribed;
 };
 
 }  // namespace middleware

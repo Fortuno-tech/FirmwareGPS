@@ -57,6 +57,7 @@ constexpr uint32_t SIM7600_BOOT_DELAY_MS = 5000U;
 constexpr uint32_t SIM7600_GNSS_QUERY_TIMEOUT_MS = 3000;
 constexpr uint32_t SIM7600_UART_MUTEX_TIMEOUT_MS = 50;
 constexpr uint32_t GNSS_POLL_INTERVAL_MS = 1000;
+constexpr uint32_t GPS_LAST_FIX_MAX_AGE_MS = 15000;
 constexpr uint8_t GPS_MIN_SATELLITES_FOR_FIX = 4;
 
 // ============================================================================

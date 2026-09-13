@@ -1,5 +1,7 @@
 #include "app/system_controller/system_controller.hpp"
 
+#include <Arduino.h>
+
 #include "config/hardware_config.h"
 #include "config/network_config.h"
 #include "utils/timer_utils.h"
@@ -41,7 +43,10 @@ SystemController::SystemController(
 	  _initialized(false), _running(false), _bootStage(BootStage::Idle),
 	  _lastNetworkTimeSyncMs(0U), _lastRfidHealthy(false),
 	  _lastSdHealthy(false), _healthStateKnown(false), _lastHeartbeatMs(0U),
-	  _lastAuthenticationTimestamp(0U), _lastGpsLogMs(0U)
+	  _lastAuthenticationTimestamp(0U), _lastGpsLogMs(0U),
+	  _lastAlertTimestamp(0U), _lastAlertCode(types::AlertCode::DIAGNOSTIC_WARNING),
+	  _hasProcessedAlert(false), _lastBatteryLogMs(0U), _lastStatusPublishMs(0U),
+	  _lastPublishedRelayState(types::RelayState::LOCKED), _relayStateKnown(false)
 {
 }
 
@@ -154,6 +159,7 @@ bool SystemController::start()
 	// Les vérifications suivantes sont faites périodiquement dans update().
 	synchronizeRtcFromNetwork();
 	_lastNetworkTimeSyncMs = utils::Timer::millis();
+	_lastStatusPublishMs = 0U;
 	logSim7600Diagnostics();
 	setBootStage(BootStage::ConnectingMqtt, "connexion MQTT cellulaire");
 	types::MqttCredentials credentials{};
@@ -206,6 +212,13 @@ bool SystemController::start()
 		_logger.info(logging::TAG_STORAGE,
 					 "journal SD actif: /fortico.log");
 	}
+
+	// Étape initiale : le relais maintient le moteur coupé par défaut.
+	_relayManager.submit({types::RelayCmd::CUT, types::RelaySource::AUTH, utils::Timer::millis()});
+	_telemetryService.setActiveTracking(false);
+	_logger.info(logging::TAG_SYSTEM_CONTROLLER,
+				 "ETAPE INITIALE : Moteur verrouille (relais coupe). En attente du badge chauffeur...");
+
 	_running = true;
 	_lastNetworkTimeSyncMs = utils::Timer::millis();
 	setBootStage(BootStage::Ready, "Fortico operationnel");
@@ -215,21 +228,61 @@ bool SystemController::start()
 void SystemController::update()
 {
 	if (!_running) return;
+	const uint64_t updateStartMs = utils::Timer::millis();
+	if (logging::ENABLE_HOT_PATH_PERF_LOGS) {
+		Serial.printf("[PERF][SYSTEM] update START t=%llu\n",
+					  static_cast<unsigned long long>(updateStartMs));
+	}
+	if (logging::ENABLE_HOT_PATH_PERF_LOGS) {
+		Serial.printf("[PERF][SYSTEM] update END duration=%llu\n",
+					  static_cast<unsigned long long>(utils::Timer::millis() - updateStartMs));
+	}
+
 	_gpsService.update();
 	logGpsPosition();
+
 	const uint64_t rfidStartMs = utils::Timer::millis();
 	_rfidService.update();
+
+	// Synchronisation de l'état du relais et du carburant dans le service de télémétrie
+	_telemetryService.setRelay(_relayManager.state());
+	_telemetryService.setFuel(_fuelManager.getLevel());
+
+	// Traitement de l'authentification chauffeur par RFID
 	const types::AuthenticationDecision decision = _authenticationService.decision();
 	if (decision.timestamp != 0U &&
 		decision.timestamp != _lastAuthenticationTimestamp) {
-		const char* result = decision.result == types::AuthenticationResult::AUTHORIZED
-			? "autorise" : "refuse";
-		_logger.info(logging::TAG_SYSTEM_CONTROLLER,
-					 "badge RFID traite: uid=%s resultat=%s timestamp=%llu",
-					 decision.uid, result,
-					 static_cast<unsigned long long>(decision.timestamp));
 		_lastAuthenticationTimestamp = decision.timestamp;
+		const bool isAuthorized = (decision.result == types::AuthenticationResult::AUTHORIZED);
+		drivers::RtcDateTime rfidEventTime{};
+		const bool rfidTimeValid = _rtcDriver.readDateTime(rfidEventTime);
+		_telemetryService.publishRfid(
+			decision.uid, isAuthorized, rfidTimeValid ? &rfidEventTime : nullptr);
+
+		if (isAuthorized) {
+			// Badge vérifié avec succès : moteur autorisé par le relais et passage à l'étape de suivi actif
+			_relayManager.submit({types::RelayCmd::ENGAGE, types::RelaySource::AUTH, decision.timestamp});
+			_telemetryService.setAuthentication(decision.result);
+			_telemetryService.setActiveTracking(true);
+			_logger.info(logging::TAG_SYSTEM_CONTROLLER,
+						 "CHAUFFEUR VERIFIE (UID: %s). Moteur autorise par le relais. Passage a l'etape suivante : suivi GPS et MQTT actives.",
+						 decision.uid);
+			// Notification MQTT immédiate pour le déblocage moteur
+			if (_mqttClient.connected()) {
+				_telemetryService.forcePublish();
+			}
+		} else {
+			// Badge non reconnu ou non autorisé : moteur maintenu coupé, alerte déclenchée
+			_relayManager.submit({types::RelayCmd::CUT, types::RelaySource::AUTH, decision.timestamp});
+			_telemetryService.setAuthentication(decision.result);
+			_telemetryService.setActiveTracking(false);
+			_alertManager.raise(types::AlertCode::AUTH_DENIED, types::AlertSeverity::MEDIUM, decision.timestamp);
+			_logger.warn(logging::TAG_SYSTEM_CONTROLLER,
+						 "CHAUFFEUR NON RECONNU (UID: %s). Moteur maintenu coupe par le relais. Alerte emise.",
+						 decision.uid);
+		}
 	}
+
 	const uint64_t rfidElapsedMs = utils::Timer::millis() - rfidStartMs;
 	const bool rfidHealthy = _rfidService.isRunning();
 	const bool sdHealthy = _sdDriver.isHealthy();
@@ -252,35 +305,109 @@ void SystemController::update()
 	_lastRfidHealthy = rfidHealthy;
 	_lastSdHealthy = sdHealthy;
 	_healthStateKnown = true;
+
 	if (utils::Timer::millis() - _lastHeartbeatMs >= 10000U) {
 		_logger.info(logging::TAG_SYSTEM_CONTROLLER,
-					 "heartbeat: controleur vivant, RFID=%s, SD=%s, cycles=%lu, uid=%lu, echecs=%lu",
+					 "heartbeat: controleur vivant, RFID=%s, SD=%s, suivi_actif=%s, cycles=%lu, uid=%lu, echecs=%lu",
 					 rfidHealthy ? "actif" : "indisponible",
 					 sdHealthy ? "sain" : "indisponible",
+					 _telemetryService.isActiveTracking() ? "oui" : "attente_badge",
 					 static_cast<unsigned long>(_rfidService.updateCount()),
 					 static_cast<unsigned long>(_rfidService.uidCount()),
 					 static_cast<unsigned long>(_rfidService.readFailureCount()));
 		_lastHeartbeatMs = utils::Timer::millis();
 	}
+	const uint64_t statusNowMs = utils::Timer::millis();
+	if (_lastStatusPublishMs == 0U ||
+		statusNowMs - _lastStatusPublishMs >= 60000U) {
+		_telemetryService.publishStatus(
+			_mqttClient.connected(), _sim7600Service.isRunning(),
+			_gpsService.isRunning(), _sdDriver.isHealthy());
+		_lastStatusPublishMs = statusNowMs;
+	}
+
 	const uint64_t nowMs = utils::Timer::millis();
 	if (nowMs - _lastNetworkTimeSyncMs >=
 		hardware::NETWORK_TIME_SYNC_INTERVAL_MS) {
 		synchronizeRtcFromNetwork();
 		_lastNetworkTimeSyncMs = nowMs;
 	}
+
 	_alertManager.update();
 	_alertManager.process();
+	processAlerts();
+
 	_powerMonitor.update();
 	_powerManager.update();
+	logBatteryStatus();
+
 	_relayManager.update();
 	_relayManager.process();
+	const types::RelayState relayState = _relayManager.state();
+	if (!_relayStateKnown || relayState != _lastPublishedRelayState) {
+		_telemetryService.publishEngine(
+			relayState, _telemetryService.isActiveTracking());
+		_lastPublishedRelayState = relayState;
+		_relayStateKnown = true;
+	}
+
 	_fuelManager.update();
 	_fuelManager.process();
+
 	_fuelDriver.poll();
 	_rtcDriver.poll();
 	_sdDriver.poll();
+
 	_diagnosticsService.update();
 	_telemetryService.update();
+	Serial.printf("[PERF][SYSTEM] update END duration=%llu\n",
+				  static_cast<unsigned long long>(utils::Timer::millis() - updateStartMs));
+}
+
+void SystemController::processAlerts()
+{
+	if (!_alertManager.hasPendingAlert()) return;
+	const types::AlertEvent alert = _alertManager.pendingAlert();
+	if (!_hasProcessedAlert || alert.timestamp != _lastAlertTimestamp || alert.code != _lastAlertCode) {
+		_hasProcessedAlert = true;
+		_lastAlertTimestamp = alert.timestamp;
+		_lastAlertCode = alert.code;
+		_telemetryService.publishAlarm(alert);
+		const char* alertName = "INCONNU";
+		switch (alert.code) {
+			case types::AlertCode::AUTH_DENIED: alertName = "BADGE_NON_AUTORISE"; break;
+			case types::AlertCode::SOS_BUTTON: alertName = "BOUTON_SOS_PRESSE"; break;
+			case types::AlertCode::BATTERY_LOW: alertName = "BATTERIE_CRITIQUE"; break;
+			case types::AlertCode::FUEL_ANOMALY: alertName = "ANOMALIE_CARBURANT"; break;
+			case types::AlertCode::GPS_LOST: alertName = "SIGNAL_GPS_PERDU"; break;
+			case types::AlertCode::RELAY_FAULT: alertName = "DEFAILLANCE_RELAIS"; break;
+			case types::AlertCode::NETWORK_LOST: alertName = "RESEAU_CELLULAIRE_PERDU"; break;
+			case types::AlertCode::DIAGNOSTIC_WARNING: alertName = "AVERTISSEMENT_DIAGNOSTIC"; break;
+		}
+		_logger.warn(logging::TAG_ALERT,
+					 "ALERTE DETECTEE: %s (severite=%u)",
+					 alertName, static_cast<unsigned int>(alert.severity));
+		if (_mqttClient.connected()) {
+			_telemetryService.forcePublish();
+		}
+	}
+}
+
+void SystemController::logBatteryStatus()
+{
+	constexpr uint64_t batteryLogIntervalMs = 60000U; // toutes les 60s
+	const uint64_t nowMs = utils::Timer::millis();
+	if (nowMs - _lastBatteryLogMs < batteryLogIntervalMs) return;
+	_lastBatteryLogMs = nowMs;
+
+	const core::PowerState pState = _powerMonitor.state();
+	const char* stateStr = "NORMALE";
+	if (pState == core::PowerState::LOW_POWER) stateStr = "FAIBLE";
+	else if (pState == core::PowerState::CRITICAL) stateStr = "CRITIQUE";
+
+	_logger.info(logging::TAG_POWER,
+				 "Batterie: etat=%s (alimentation stable)",
+				 stateStr);
 }
 
 void SystemController::stop()
@@ -345,12 +472,13 @@ void SystemController::logSim7600Diagnostics()
 void SystemController::logGpsPosition()
 {
 	constexpr uint64_t gpsLogIntervalMs = 5000U;
+	constexpr uint64_t gpsStaleAfterMs = 3000U;
 	const uint64_t nowMs = utils::Timer::millis();
 	if (nowMs - _lastGpsLogMs < gpsLogIntervalMs) return;
 	_lastGpsLogMs = nowMs;
 
 	const types::GpsData& gps = _gpsService.data();
-	if (!gps.fixValid) {
+	if (!gps.hasLastFix) {
 		_logger.info(logging::TAG_TRACKING,
 					 "GPS: attente fix, mode=%u satellites=%u HDOP=%.2f PDOP=%.2f",
 					 static_cast<unsigned int>(gps.fixMode),
@@ -358,10 +486,29 @@ void SystemController::logGpsPosition()
 		return;
 	}
 
+	const uint64_t ageMs = nowMs - gps.timestamp;
+	if (!gps.fixValid) {
+		_logger.info(logging::TAG_TRACKING,
+					 "GPS: dernier fix expire, age=%llums lat=%.6f lon=%.6f alt=%.0fm sat=%u HDOP=%.1f PDOP=%.1f",
+					 static_cast<unsigned long long>(ageMs), gps.latitude,
+					 gps.longitude, gps.altitudeMeters,
+					 static_cast<unsigned int>(gps.satellites), gps.hdop, gps.pdop);
+		return;
+	}
+	if (ageMs > gpsStaleAfterMs) {
+		_logger.info(logging::TAG_TRACKING,
+					 "GPS: dernier fix connu, age=%llums lat=%.6f lon=%.6f alt=%.0fm vitesse=%.1fkm/h cap=%.0f sat=%u HDOP=%.1f PDOP=%.1f",
+					 static_cast<unsigned long long>(ageMs), gps.latitude,
+					 gps.longitude, gps.altitudeMeters, gps.speedKmh,
+					 gps.headingDeg, static_cast<unsigned int>(gps.satellites),
+					 gps.hdop, gps.pdop);
+		return;
+	}
+
 	_logger.info(logging::TAG_TRACKING,
 				 "GPS: fix=%u lat=%.6f lon=%.6f alt=%.0fm vitesse=%.1fkm/h cap=%.0f sat=%u HDOP=%.1f PDOP=%.1f",
-				 static_cast<unsigned int>(gps.fixMode), gps.latitude, gps.longitude,
-				 gps.altitudeMeters, gps.speedKmh, gps.headingDeg,
+				 static_cast<unsigned int>(gps.fixMode), gps.latitude,
+				 gps.longitude, gps.altitudeMeters, gps.speedKmh, gps.headingDeg,
 				 static_cast<unsigned int>(gps.satellites), gps.hdop, gps.pdop);
 }
 

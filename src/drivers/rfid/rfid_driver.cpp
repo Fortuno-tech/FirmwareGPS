@@ -4,6 +4,7 @@
 #include <cstring>
 
 #include "config/hardware_config.h"
+#include "config/logging_config.h"
 #include "config/pin_config.h"
 #include "config/task_config.h"
 
@@ -215,6 +216,20 @@ bool RfidDriver::configurePn532()
 
         Serial.println(
             "[RFID][ERROR] SAMConfig() echoue");
+
+        return false;
+    }
+
+    const bool retriesConfigured =
+        _pn532.setPassiveActivationRetries(
+            PN532_PASSIVE_ACTIVATION_RETRIES);
+
+    if (!retriesConfigured) {
+
+        _i2cHal.unlock();
+
+        Serial.println(
+            "[RFID][ERROR] Activation retries echouee");
 
         return false;
     }
@@ -703,7 +718,11 @@ bool RfidDriver::readUid(
     uint32_t timeoutMs)
 {
     uidLength = 0U;
-
+    const uint64_t readStartMs = millis();
+    if (logging::ENABLE_HOT_PATH_PERF_LOGS) {
+        Serial.printf("[PERF][RFID] readUid START t=%llu\n",
+                  static_cast<unsigned long long>(readStartMs));
+    }
     if (!_initialized ||
         !_active ||
         !_healthy ||
@@ -731,6 +750,13 @@ bool RfidDriver::readUid(
     }
     xSemaphoreGive(_resultMutex);
 
+    if (logging::ENABLE_HOT_PATH_PERF_LOGS) {
+        Serial.printf("[PERF][RFID] readUid END duration=%llu result=%s uidLength=%u\n",
+                  static_cast<unsigned long long>(millis() - readStartMs),
+                  (available && cardPresent && uidLength > 0U && uidLength <= 16U)
+                      ? "true" : "false",
+                  static_cast<unsigned int>(uidLength));
+    }
     return available && cardPresent && uidLength > 0U && uidLength <= 16U;
 
 #else

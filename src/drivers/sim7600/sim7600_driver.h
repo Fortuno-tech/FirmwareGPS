@@ -9,11 +9,33 @@
 #include "hal/uart/uart_hal.h"
 #include "interfaces/idriver.h"
 
+#ifdef ESP32_TARGET
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#endif
+
 namespace fortico {
 namespace drivers {
 
+struct MqttIncomingMessage {
+	uint8_t clientIndex;
+	char topic[96];
+	char payload[1024];
+	std::size_t topicLength;
+	std::size_t payloadLength;
+};
+
 class Sim7600Driver : public interfaces::IDriver {
 public:
+	enum class CommandFailure : uint8_t {
+		NONE,
+		INVALID,
+		MUTEX_TIMEOUT,
+		UART_WRITE,
+		ERROR_RESPONSE,
+		TIMEOUT,
+	};
+
 	Sim7600Driver(hal::UartHal& uartHal, hal::DelayHal& delayHal);
 
 	constants::ErrorCode init() override;
@@ -36,6 +58,8 @@ public:
 	bool writeRaw(const uint8_t* data, std::size_t length,
 				  char* response, std::size_t responseSize,
 				  uint32_t timeoutMs);
+	bool pollMqttIncoming(MqttIncomingMessage& message);
+	bool takeMqttConnectionLost();
 	bool testAt(uint32_t timeoutMs = 1000U);
 	bool getModemInformation(char* information, std::size_t informationSize);
 	bool isSimReady();
@@ -54,6 +78,9 @@ public:
 	bool deleteCertificate(const char* certificateFile);
 	bool downloadCertificate(const char* certificateFile, const uint8_t* certData,
 							 std::size_t certLen);
+	bool lockTransaction(uint32_t timeoutMs);
+	void unlockTransaction();
+	CommandFailure lastCommandFailure() const;
 
 private:
 	bool sendCommandUntil(const char* command, const char* completionToken,
@@ -62,6 +89,9 @@ private:
 	bool sendDiagnosticCommand(const char* command, char* response,
 						   std::size_t responseSize, uint32_t timeoutMs);
 	void drainInput();
+	void consumeIncomingByte(uint8_t byte);
+	void resetIncomingParser();
+	bool takeIncomingMessage(MqttIncomingMessage& message);
 
 	hal::UartHal& _uartHal;
 	hal::DelayHal& _delayHal;
@@ -69,6 +99,21 @@ private:
 	bool _healthy;
 	bool _active;
 	bool _dataConnected;
+	CommandFailure _lastCommandFailure;
+	MqttIncomingMessage _incomingMessage;
+	uint8_t _incomingParserState;
+	std::size_t _incomingExpected;
+	std::size_t _incomingPosition;
+	std::size_t _incomingTopicTotal;
+	std::size_t _incomingPayloadTotal;
+	uint32_t _incomingLastByteMs;
+	char _incomingLine[96];
+	std::size_t _incomingLineLength;
+	bool _incomingMessageReady;
+	bool _incomingConnectionLost;
+#ifdef ESP32_TARGET
+	SemaphoreHandle_t _transactionMutex;
+#endif
 };
 
 }  // namespace drivers
