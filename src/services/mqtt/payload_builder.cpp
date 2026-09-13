@@ -272,5 +272,33 @@ bool PayloadBuilder::status(const MqttDeviceContext& context, uint32_t uptime,
 	return written >= 0 && static_cast<std::size_t>(written) < outputSize;
 }
 
+bool PayloadBuilder::commandAck(const MqttDeviceContext& context,
+								const char* id, const char* command, bool success,
+								const char* error, char* output,
+								std::size_t outputSize)
+{
+	EscapedContext escaped{};
+	char timestamp[32]{};
+	char escapedId[80]{};
+	char escapedCommand[48]{};
+	char escapedError[80]{};
+	if (!prepareContext(context, escaped) || id == nullptr || command == nullptr ||
+		!escapeJson(id, escapedId, sizeof(escapedId)) ||
+		!escapeJson(command, escapedCommand, sizeof(escapedCommand)) ||
+		!writeTimestamp(context, timestamp, sizeof(timestamp))) return false;
+	if (error == nullptr) std::snprintf(escapedError, sizeof(escapedError), "null");
+	else if (!escapeJson(error, escapedError, sizeof(escapedError))) return false;
+	char errorJson[96]{};
+	if (error == nullptr) std::snprintf(errorJson, sizeof(errorJson), "null");
+	else std::snprintf(errorJson, sizeof(errorJson), "\"%s\"", escapedError);
+	const int written = std::snprintf(
+		output, outputSize,
+		"{\"id\":\"%s\",\"deviceId\":\"%s\",\"vehicleId\":\"%s\",\"timestamp\":%s,\"command\":\"%s\",\"success\":%s,\"error\":%s,\"firmware\":\"%s\"}",
+		escapedId, escaped.deviceId, escaped.vehicleId, timestamp,
+		escapedCommand, success ? "true" : "false", errorJson,
+		escaped.firmware);
+	return written >= 0 && static_cast<std::size_t>(written) < outputSize;
+}
+
 }  // namespace services
 }  // namespace fortico

@@ -47,6 +47,7 @@
 #include "services/mqtt/mqtt_identity.h"
 #include "services/temperature/temperature_sensor.h"
 #include "services/mqtt/mqtt_publish_task.h"
+#include "services/mqtt/mqtt_command_handler.h"
 #include "managers/power_manager/power_manager.h"
 #include "managers/ota_manager/ota_manager.h"
 #include "services/rfid/rfid_service.h"
@@ -103,8 +104,6 @@ fortico::core::CompositeLogSink g_logSink(g_serialLogSink, g_sdLogSink);
 fortico::core::Logger g_logger;
 fortico::middleware::CellularMqttClient g_mqttClient(g_sim7600, g_logger);
 fortico::services::MqttPublishQueue g_mqttPublishQueue(g_logger);
-fortico::services::MqttPublishTask g_mqttPublishTask(
-    g_mqttPublishQueue, g_mqttClient, g_logger);
 fortico::services::UnavailableTemperatureSensor g_temperatureSensor;
 fortico::services::SecurityService g_securityService(g_nvsDriver);
 fortico::services::StorageService g_storageService(
@@ -128,6 +127,11 @@ fortico::services::MqttTelemetrySink g_telemetrySink(
 fortico::services::TelemetryService g_telemetryService(
      g_telemetryManager, &g_telemetrySink, &g_gpsService, &g_rtcDriver,
      &g_temperatureSensor);
+fortico::services::MqttCommandHandler g_mqttCommandHandler(
+    g_mqttPublishQueue, g_relayManager, g_telemetryService, g_gpsService,
+    g_sim7600Service, g_sdDriver, g_mqttClient, g_rtcDriver, g_logger);
+fortico::services::MqttPublishTask g_mqttPublishTask(
+    g_mqttPublishQueue, g_mqttClient, g_logger, g_mqttCommandHandler);
 fortico::app::Application g_application(
     g_eventBus,
     g_logger,

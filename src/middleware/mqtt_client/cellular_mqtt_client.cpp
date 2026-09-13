@@ -5,6 +5,8 @@
 
 #include "config/sim7600_mqtt_config.h"
 #include "config/logging_config.h"
+#include "services/mqtt/mqtt_identity.h"
+#include "services/mqtt/mqtt_topics.h"
 #include "utils/timer_utils.h"
 
 namespace {
@@ -39,7 +41,8 @@ namespace middleware {
 CellularMqttClient::CellularMqttClient(drivers::Sim7600Driver& modem,
                                        core::Logger& logger)
     : _modem(modem), _logger(logger), _credentials{}, _credentialsSet(false),
-      _connected(false), _serviceStarted(false), _clientAcquired(false) {}
+            _connected(false), _serviceStarted(false), _clientAcquired(false),
+            _subscribed(false) {}
 
 bool CellularMqttClient::setCredentials(
     const types::MqttCredentials& credentials)
@@ -174,7 +177,100 @@ bool CellularMqttClient::connect(const char* host, uint16_t port)
         return false;
     }
     _logger.info(logging::TAG_MQTT, "connexion MQTT/TLS etablie");
+    if (!subscribeCommands()) {
+        _logger.error(logging::TAG_MQTT, "[MQTT][SUB] subscribe failed");
+        _connected = false;
+        return false;
+    }
     return _connected;
+}
+
+bool CellularMqttClient::subscribeCommands()
+{
+    ModemTransactionGuard transaction(_modem);
+    if (!transaction.locked()) return false;
+    char topic[96]{};
+    char command[96]{};
+    char response[256]{};
+    if (!services::MqttTopics::build(services::MqttIdentity::vehicleId(),
+                                            services::MqttTopics::CMD, topic, sizeof(topic))) return false;
+    const std::size_t length = std::strlen(topic);
+    const unsigned int qos = 1U;
+    std::snprintf(command, sizeof(command), modem_mqtt::Commands::SET_SUBSCRIBE_TOPIC,
+                  static_cast<unsigned int>(length));
+    _logger.info(logging::TAG_MQTT,
+                 "[MQTT][SUB] topic='%s' len=%u qos=%u",
+                 topic, static_cast<unsigned int>(length), qos);
+    _logger.info(logging::TAG_MQTT,
+                 "[MQTT][SUB] CMQTTSUBTOPIC command=%s",
+                 command);
+    response[0] = '\0';
+    if (!_modem.beginMqttInput(command, response, sizeof(response), 2000U)) {
+        _logger.error(logging::TAG_MQTT,
+                      "[MQTT][SUB] CMQTTSUBTOPIC prompt failed response=%s",
+                      response);
+        return false;
+    }
+    _logger.info(logging::TAG_MQTT, "[MQTT][SUB] prompt received");
+    if (!_modem.writeRaw(reinterpret_cast<const uint8_t*>(topic), length,
+                         response, sizeof(response), 2000U)) {
+        _logger.error(logging::TAG_MQTT,
+                      "[MQTT][SUB] topic write failed response=%s",
+                      response);
+        return false;
+    }
+    _logger.info(logging::TAG_MQTT,
+                 "[MQTT][SUB] topic accepted len=%u",
+                 static_cast<unsigned int>(length));
+    std::snprintf(command, sizeof(command), modem_mqtt::Commands::SUBSCRIBE);
+    _logger.info(logging::TAG_MQTT,
+                 "[MQTT][SUB] CMQTTSUB command=%s",
+                 command);
+    const bool success = _modem.sendMqttCommand(command, "+CMQTTSUB: 0,0",
+                                                response, sizeof(response), 10000U);
+    if (!success) {
+        const char* cmqttsub = std::strstr(response, "+CMQTTSUB:");
+        if (cmqttsub != nullptr) {
+            unsigned int client = 0U;
+            unsigned int err = 0U;
+            if (std::sscanf(cmqttsub, "+CMQTTSUB: %u,%u", &client, &err) == 2) {
+                _logger.error(logging::TAG_MQTT,
+                              "[MQTT][SUB] CMQTTSUB failed client=%u err=%u",
+                              client, err);
+            }
+        }
+        _logger.error(logging::TAG_MQTT,
+                      "[MQTT][SUB] CMQTTSUB failed response=%s",
+                      response);
+        return false;
+    }
+    const char* cmqttsub = std::strstr(response, "+CMQTTSUB:");
+    if (cmqttsub != nullptr) {
+        unsigned int client = 0U;
+        unsigned int err = 0U;
+        if (std::sscanf(cmqttsub, "+CMQTTSUB: %u,%u", &client, &err) == 2) {
+            _logger.info(logging::TAG_MQTT,
+                         "[MQTT][SUB] CMQTTSUB result client=%u err=%u",
+                         client, err);
+            if (err != 0U) {
+                return false;
+            }
+        }
+    }
+    _subscribed = true;
+    _logger.info(logging::TAG_MQTT, "[MQTT][SUB] success");
+    return true;
+}
+
+bool CellularMqttClient::pollIncoming(drivers::MqttIncomingMessage& message)
+{
+    if (_modem.takeMqttConnectionLost()) {
+        _connected = false;
+        _subscribed = false;
+        _logger.warn(logging::TAG_MQTT,
+                     "[MQTT][SUB] subscription invalidated by modem disconnect");
+    }
+    return _connected && _subscribed && _modem.pollMqttIncoming(message);
 }
 
 bool CellularMqttClient::publish(const char* topic, const void* payload,
@@ -313,6 +409,7 @@ void CellularMqttClient::releaseResources()
                                response, sizeof(response), 15000U);
     }
     _connected = false;
+	_subscribed = false;
     _clientAcquired = false;
     _serviceStarted = false;
 }

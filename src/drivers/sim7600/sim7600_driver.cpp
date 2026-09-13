@@ -21,6 +21,13 @@ Sim7600Driver::Sim7600Driver(hal::UartHal& uartHal, hal::DelayHal& delayHal)
 	  , _transactionMutex(xSemaphoreCreateRecursiveMutex())
 #endif
 {
+	resetIncomingParser();
+}
+
+namespace {
+enum IncomingParserState : uint8_t {
+	RX_IDLE, RX_TOPIC_BODY, RX_PAYLOAD_BODY, RX_WAIT_END
+};
 }
 
 bool Sim7600Driver::lockTransaction(uint32_t timeoutMs)
@@ -160,6 +167,18 @@ bool Sim7600Driver::sendCommandUntil(const char* command,
 		}
 		response[length++] = static_cast<char>(byte);
 		response[length] = '\0';
+		consumeIncomingByte(byte);
+		const char* cmqttsub = std::strstr(response, "+CMQTTSUB:");
+		if (cmqttsub != nullptr) {
+			unsigned int client = 0U;
+			unsigned int err = 0U;
+			if (std::sscanf(cmqttsub, "+CMQTTSUB: %u,%u", &client, &err) == 2) {
+				if (err != 0U) {
+					unlockTransaction();
+					return false;
+				}
+			}
+		}
 		if (std::strstr(response, completionToken) != nullptr) {
 			unlockTransaction();
 			return true;
@@ -200,6 +219,7 @@ bool Sim7600Driver::writeRaw(const uint8_t* data, std::size_t length,
 			response[received++] = static_cast<char>(byte);
 			response[received] = '\0';
 		}
+		consumeIncomingByte(byte);
 		if (recentLength + 1U >= sizeof(recent)) {
 			std::memmove(recent, recent + 1U, sizeof(recent) - 2U);
 			recentLength = sizeof(recent) - 2U;
@@ -219,6 +239,140 @@ bool Sim7600Driver::writeRaw(const uint8_t* data, std::size_t length,
 	}
 	unlockTransaction();
 	return false;
+}
+
+bool Sim7600Driver::pollMqttIncoming(MqttIncomingMessage& message)
+{
+	if (takeIncomingMessage(message)) return true;
+	if (!_initialized || !_active || !lockTransaction(0U)) return false;
+	uint8_t byte = 0U;
+	while (_uartHal.available() > 0 && _uartHal.read(&byte, 1U, 0U) == 1U) {
+		consumeIncomingByte(byte);
+		if (takeIncomingMessage(message)) {
+			unlockTransaction();
+			return true;
+		}
+	}
+	unlockTransaction();
+	return takeIncomingMessage(message);
+}
+
+void Sim7600Driver::resetIncomingParser()
+{
+	_incomingParserState = RX_IDLE;
+	_incomingExpected = 0U;
+	_incomingPosition = 0U;
+	_incomingTopicTotal = 0U;
+	_incomingPayloadTotal = 0U;
+	_incomingLastByteMs = 0U;
+	_incomingLineLength = 0U;
+	_incomingMessageReady = false;
+	_incomingConnectionLost = false;
+	std::memset(&_incomingMessage, 0, sizeof(_incomingMessage));
+	std::memset(_incomingLine, 0, sizeof(_incomingLine));
+}
+
+bool Sim7600Driver::takeIncomingMessage(MqttIncomingMessage& message)
+{
+	if (!_incomingMessageReady) return false;
+	message = _incomingMessage;
+	_incomingMessageReady = false;
+	resetIncomingParser();
+	return true;
+}
+
+bool Sim7600Driver::takeMqttConnectionLost()
+{
+	const bool lost = _incomingConnectionLost;
+	_incomingConnectionLost = false;
+	return lost;
+}
+
+void Sim7600Driver::consumeIncomingByte(uint8_t byte)
+{
+	if (_incomingMessageReady) return;
+	const uint32_t nowMs = utils::Timer::millis();
+	if ((_incomingParserState == RX_TOPIC_BODY ||
+		 _incomingParserState == RX_PAYLOAD_BODY ||
+		 _incomingParserState == RX_WAIT_END) &&
+		nowMs - _incomingLastByteMs > 5000U) {
+		resetIncomingParser();
+	}
+	_incomingLastByteMs = nowMs;
+	if (_incomingParserState == RX_TOPIC_BODY ||
+		_incomingParserState == RX_PAYLOAD_BODY) {
+		if (_incomingPosition < _incomingExpected) {
+			if (_incomingParserState == RX_TOPIC_BODY &&
+				_incomingPosition + 1U < sizeof(_incomingMessage.topic)) {
+				_incomingMessage.topic[_incomingPosition] = static_cast<char>(byte);
+			} else if (_incomingParserState == RX_PAYLOAD_BODY &&
+				_incomingPosition + 1U < sizeof(_incomingMessage.payload)) {
+				_incomingMessage.payload[_incomingPosition] = static_cast<char>(byte);
+			}
+			++_incomingPosition;
+		}
+		if (_incomingPosition == _incomingExpected) {
+			if (_incomingParserState == RX_TOPIC_BODY) {
+				_incomingMessage.topicLength = _incomingExpected;
+				_incomingMessage.topic[_incomingExpected] = '\0';
+				_incomingParserState = RX_IDLE;
+			} else {
+				_incomingMessage.payloadLength = _incomingExpected;
+				_incomingMessage.payload[_incomingExpected] = '\0';
+				_incomingParserState = RX_WAIT_END;
+			}
+		}
+		return;
+	}
+	if (byte == '\n') {
+		_incomingLine[_incomingLineLength] = '\0';
+		unsigned int client = 0U;
+		unsigned int totalTopic = 0U;
+		unsigned int totalPayload = 0U;
+		unsigned int length = 0U;
+		unsigned int endClient = 0U;
+		if (std::sscanf(_incomingLine, "+CMQTTRXSTART: %u,%u,%u",
+			&client, &totalTopic, &totalPayload) == 3 &&
+			totalTopic < sizeof(_incomingMessage.topic) &&
+			totalPayload < sizeof(_incomingMessage.payload)) {
+			_incomingMessage.clientIndex = static_cast<uint8_t>(client);
+			_incomingMessage.topicLength = 0U;
+			_incomingMessage.payloadLength = 0U;
+			_incomingTopicTotal = totalTopic;
+			_incomingPayloadTotal = totalPayload;
+		} else if (std::sscanf(_incomingLine, "+CMQTTRXTOPIC: %u,%u",
+			&client, &length) == 2 && length < sizeof(_incomingMessage.topic) &&
+			length <= _incomingTopicTotal) {
+			_incomingMessage.clientIndex = static_cast<uint8_t>(client);
+			_incomingExpected = length;
+			_incomingPosition = 0U;
+			_incomingParserState = RX_TOPIC_BODY;
+		} else if (std::sscanf(_incomingLine, "+CMQTTRXPAYLOAD: %u,%u",
+			&client, &length) == 2 && length < sizeof(_incomingMessage.payload) &&
+			length <= _incomingPayloadTotal) {
+			_incomingMessage.clientIndex = static_cast<uint8_t>(client);
+			_incomingExpected = length;
+			_incomingPosition = 0U;
+			_incomingParserState = RX_PAYLOAD_BODY;
+		} else if (std::sscanf(_incomingLine, "+CMQTTRXEND: %u", &endClient) == 1 &&
+			_incomingParserState == RX_WAIT_END &&
+			endClient == _incomingMessage.clientIndex &&
+			_incomingMessage.topicLength == _incomingTopicTotal &&
+			_incomingMessage.payloadLength == _incomingPayloadTotal) {
+			_incomingMessageReady = true;
+		} else if (std::strstr(_incomingLine, "+CMQTTCONNLOST:") != nullptr ||
+			std::strstr(_incomingLine, "+CMQTTNONET") != nullptr) {
+			resetIncomingParser();
+			_incomingConnectionLost = true;
+		}
+		_incomingLineLength = 0U;
+		return;
+	}
+	if (byte != '\r' && _incomingLineLength + 1U < sizeof(_incomingLine)) {
+		_incomingLine[_incomingLineLength++] = static_cast<char>(byte);
+	} else if (_incomingLineLength + 1U >= sizeof(_incomingLine)) {
+		resetIncomingParser();
+	}
 }
 
 bool Sim7600Driver::testAt(uint32_t timeoutMs)
@@ -578,9 +732,10 @@ bool Sim7600Driver::sendDiagnosticCommand(const char* command, char* response,
 
 void Sim7600Driver::drainInput()
 {
-	uint8_t discarded = 0U;
+	uint8_t buffered = 0U;
 	while (_uartHal.available() > 0) {
-		if (_uartHal.read(&discarded, 1U, 0U) == 0U) break;
+		if (_uartHal.read(&buffered, 1U, 0U) == 0U) break;
+		consumeIncomingByte(buffered);
 	}
 }
 

@@ -29,6 +29,9 @@ struct Commands {
         "AT+CMQTTTOPIC=0,%u";
     static constexpr const char* SET_PAYLOAD_LENGTH =
         "AT+CMQTTPAYLOAD=0,%u";
+    static constexpr const char* SET_SUBSCRIBE_TOPIC =
+        "AT+CMQTTSUBTOPIC=0,%u,1";
+    static constexpr const char* SUBSCRIBE = "AT+CMQTTSUB=0";
     static constexpr const char* PUBLISH = "AT+CMQTTPUB=0,%u,%u";
     static constexpr const char* DISCONNECT = "AT+CMQTTDISC=0,%u";
     static constexpr const char* RELEASE_CLIENT = "AT+CMQTTREL=0";

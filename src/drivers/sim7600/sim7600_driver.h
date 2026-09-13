@@ -17,6 +17,14 @@
 namespace fortico {
 namespace drivers {
 
+struct MqttIncomingMessage {
+	uint8_t clientIndex;
+	char topic[96];
+	char payload[1024];
+	std::size_t topicLength;
+	std::size_t payloadLength;
+};
+
 class Sim7600Driver : public interfaces::IDriver {
 public:
 	Sim7600Driver(hal::UartHal& uartHal, hal::DelayHal& delayHal);
@@ -41,6 +49,8 @@ public:
 	bool writeRaw(const uint8_t* data, std::size_t length,
 				  char* response, std::size_t responseSize,
 				  uint32_t timeoutMs);
+	bool pollMqttIncoming(MqttIncomingMessage& message);
+	bool takeMqttConnectionLost();
 	bool testAt(uint32_t timeoutMs = 1000U);
 	bool getModemInformation(char* information, std::size_t informationSize);
 	bool isSimReady();
@@ -69,6 +79,9 @@ private:
 	bool sendDiagnosticCommand(const char* command, char* response,
 						   std::size_t responseSize, uint32_t timeoutMs);
 	void drainInput();
+	void consumeIncomingByte(uint8_t byte);
+	void resetIncomingParser();
+	bool takeIncomingMessage(MqttIncomingMessage& message);
 
 	hal::UartHal& _uartHal;
 	hal::DelayHal& _delayHal;
@@ -76,6 +89,17 @@ private:
 	bool _healthy;
 	bool _active;
 	bool _dataConnected;
+	MqttIncomingMessage _incomingMessage;
+	uint8_t _incomingParserState;
+	std::size_t _incomingExpected;
+	std::size_t _incomingPosition;
+	std::size_t _incomingTopicTotal;
+	std::size_t _incomingPayloadTotal;
+	uint32_t _incomingLastByteMs;
+	char _incomingLine[96];
+	std::size_t _incomingLineLength;
+	bool _incomingMessageReady;
+	bool _incomingConnectionLost;
 #ifdef ESP32_TARGET
 	SemaphoreHandle_t _transactionMutex;
 #endif

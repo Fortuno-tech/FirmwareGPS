@@ -38,6 +38,9 @@ public:
 						uint32_t freeHeap, bool mqttConnected, bool simConnected,
 						bool gpsConnected, bool sdMounted, bool temperatureValid,
 						float boxTemperature, char* output, std::size_t outputSize);
+	static bool commandAck(const MqttDeviceContext& context, const char* id,
+						const char* command, bool success, const char* error,
+						char* output, std::size_t outputSize);
 };
 
 }  // namespace services
