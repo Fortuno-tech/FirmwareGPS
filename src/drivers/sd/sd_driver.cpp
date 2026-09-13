@@ -1,15 +1,3 @@
-/**
- * @file    sd_driver.cpp
- * @brief   Implémentation du driver carte SD — Fortico.
- *
- * @details Utilise SpiHal::native() pour passer le bon objet SPIClass
- *          à SD.begin(), garantissant que SD.h utilise exactement le
- *          même bus SPI que celui géré par le HAL.
- *
- *          Le Driver ouvre et ferme les fichiers à chaque opération :
- *          il n'y a pas de File persistant — le flush est implicite.
- *          La politique de buffering appartient au StorageManager.
- */
 #include "drivers/sd/sd_driver.h"
 
 #include "config/hardware_config.h"
@@ -24,11 +12,8 @@
 namespace fortico {
 namespace drivers {
 
-// ============================================================================
-// Constantes locales
-// ============================================================================
-
-  // namespace
+// Vitesse de sécurité SPI pour la carte SD (4 MHz max pour éviter le bruit sur PCB/fils)
+static constexpr uint32_t SAFE_SD_SPI_SPEED = 4000000U;
 
 // ============================================================================
 // Constructeur
@@ -41,6 +26,9 @@ SdDriver::SdDriver(hal::SpiHal& spiHal)
     , _active(false)
     , _mounted(false)
     , _consecutiveFailures(0U)
+    , _remountAttempts(0U)
+    , _lastRemountAttemptMs(0U)
+    , _lastHealthCheckMs(0U) // Initialisation du timer
 {
 }
 
@@ -67,11 +55,10 @@ constants::ErrorCode SdDriver::init()
         return constants::ErrorCode::SD_FAILURE;
     }
 
-    // Montage SD en utilisant le SPIClass géré par SpiHal.
-    // SD.begin() avec SPIClass& garantit l'absence de conflit de bus.
+    // Montage SD en utilisant le SPIClass géré par SpiHal avec vitesse sécurisée.
     bool mounted = false;
     for (uint8_t attempt = 0U; attempt < 3U && !mounted; ++attempt) {
-        mounted = SD.begin(pins::SD_CS, _spiHal.native(), hardware::SPI_FREQUENCY_HZ);
+        mounted = SD.begin(pins::SD_CS, _spiHal.native(), SAFE_SD_SPI_SPEED);
         if (!mounted && attempt < 2U) {
             SD.end();
             vTaskDelay(pdMS_TO_TICKS(50U));
@@ -84,6 +71,7 @@ constants::ErrorCode SdDriver::init()
     }
 
     _mounted = true;
+    _lastHealthCheckMs = millis();
 #else
     return constants::ErrorCode::SD_FAILURE;
 #endif
@@ -108,17 +96,66 @@ constants::ErrorCode SdDriver::poll()
         return constants::ErrorCode::OK;
     }
 
-    if (!_mounted) {
-        if (_consecutiveFailures < hardware::DRIVER_MAX_CONSECUTIVE_FAILURES) {
-            ++_consecutiveFailures;
+#ifdef ESP32_TARGET
+    const uint32_t nowMs = static_cast<uint32_t>(millis());
+
+    if (_mounted) {
+        // ⚠️ CRITIQUE : N'interroger la carte SD physiquement qu'une fois toutes les 5 secondes
+        // pour éviter le Card Hammering (CMD13 / Error 0x0d).
+        if (nowMs - _lastHealthCheckMs >= 5000U) {
+            _lastHealthCheckMs = nowMs;
+            if (SD.cardType() == CARD_NONE) {
+                _mounted = false;
+                SD.end();
+                _remountAttempts = 0U;
+            } else {
+                _consecutiveFailures = 0U;
+                return constants::ErrorCode::OK;
+            }
+        } else {
+            // Entre deux vérifications, on considère que la carte va bien
+            _consecutiveFailures = 0U;
+            return constants::ErrorCode::OK;
         }
-        if (_consecutiveFailures >= hardware::DRIVER_MAX_CONSECUTIVE_FAILURES) {
-            _healthy = false;
-        }
-        return constants::ErrorCode::SD_NOT_MOUNTED;
     }
 
-    return constants::ErrorCode::OK;
+    // Card is not mounted — attempt periodic remount with back-off.
+    const uint32_t cooldownMs = (_remountAttempts < 3U) ? 2000U : 10000U;
+    if (nowMs - _lastRemountAttemptMs < cooldownMs) {
+        return constants::ErrorCode::SD_NOT_MOUNTED;
+    }
+    _lastRemountAttemptMs = nowMs;
+    ++_remountAttempts;
+
+    SD.end();
+    _spiHal.init(
+        pins::SD_SCK,
+        pins::SD_MOSI,
+        pins::SD_MISO,
+        pins::SD_CS);
+
+    // Vitesse lente (2 MHz) pour les essais de reconnexion
+    const uint32_t remountFreq = 2000000U;
+
+    if (SD.begin(pins::SD_CS, _spiHal.native(), remountFreq)) {
+        _mounted             = true;
+        _healthy             = true;
+        _consecutiveFailures = 0U;
+        _remountAttempts     = 0U;
+        _lastHealthCheckMs   = nowMs;
+        return constants::ErrorCode::OK;
+    }
+
+    SD.end();
+#endif
+
+    if (_consecutiveFailures < hardware::DRIVER_MAX_CONSECUTIVE_FAILURES) {
+        ++_consecutiveFailures;
+    }
+    if (_consecutiveFailures >= hardware::DRIVER_MAX_CONSECUTIVE_FAILURES) {
+        _healthy = false;
+    }
+    return constants::ErrorCode::SD_NOT_MOUNTED;
 }
 
 // ----------------------------------------------------------------------------
@@ -131,11 +168,12 @@ bool SdDriver::start()
 
 #ifdef ESP32_TARGET
     if (!_mounted) {
-        if (!SD.begin(pins::SD_CS, _spiHal.native(), hardware::SPI_FREQUENCY_HZ)) {
+        if (!SD.begin(pins::SD_CS, _spiHal.native(), SAFE_SD_SPI_SPEED)) {
             _healthy = false;
             return false;
         }
         _mounted = true;
+        _lastHealthCheckMs = millis();
     }
 #endif
 
@@ -189,7 +227,10 @@ void SdDriver::reset()
     _mounted = false;
 #endif
 
-    _consecutiveFailures = 0U;
+    _consecutiveFailures  = 0U;
+    _remountAttempts      = 0U;
+    _lastRemountAttemptMs = 0U;
+    _lastHealthCheckMs    = 0U;
 
     if (!_initialized) {
         _healthy = false;
@@ -197,10 +238,17 @@ void SdDriver::reset()
     }
 
 #ifdef ESP32_TARGET
-    if (SD.begin(pins::SD_CS, _spiHal.native(), hardware::SPI_FREQUENCY_HZ)) {
+    _spiHal.init(
+        pins::SD_SCK,
+        pins::SD_MOSI,
+        pins::SD_MISO,
+        pins::SD_CS);
+
+    if (SD.begin(pins::SD_CS, _spiHal.native(), SAFE_SD_SPI_SPEED)) {
         _mounted = true;
         _healthy = true;
         _active  = true;
+        _lastHealthCheckMs = millis();
     } else {
         _mounted = false;
         _healthy = false;
@@ -412,11 +460,6 @@ bool SdDriver::remove(const char* path)
 
 bool SdDriver::flush()
 {
-    // Le Driver ouvre et ferme chaque fichier à chaque opération.
-    // Le flush est donc implicite (file.close() = flush + fermeture).
-    // Cette méthode satisfait ISdDriver et permet au StorageManager
-    // de déclencher un flush explicite si un File persistant est
-    // introduit dans une future itération.
     return _initialized && _active && _mounted;
 }
 

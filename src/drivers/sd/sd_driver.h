@@ -1,18 +1,3 @@
-/**
- * @file    sd_driver.h
- * @brief   Driver carte SD (SPI via SpiHal) — Fortico.
- *
- * @details Gère :
- *            - montage/démontage de la carte via SpiHal::native() ;
- *            - opérations fichier (exists, mkdir, read, write,
- *              append, remove, flush, fileSize) ;
- *            - cycle de vie IDriver complet ;
- *            - tolérance aux pannes (compteur d'échecs, isHealthy).
- *
- *          Le CS pin est injecté au constructeur depuis pin_config.h.
- *          Aucune logique de stockage métier (rotation, rétention,
- *          format de log) n'est présente ici — StorageManager.
- */
 #pragma once
 
 #include <cstddef>
@@ -31,15 +16,9 @@ class SdDriver :
     public interfaces::ISdDriver
 {
 public:
-    /**
-     * @param spiHal  HAL SPI initialisé (VSPI dédié SD).
-    
-     */
     explicit SdDriver(hal::SpiHal& spiHal);
 
-    // -------------------------------------------------------------------------
     // IDriver — cycle de vie
-    // -------------------------------------------------------------------------
     constants::ErrorCode init()          override;
     constants::ErrorCode poll()          override;
     bool                 start()         override;
@@ -48,9 +27,7 @@ public:
     bool                 isInitialized() const override;
     void                 reset()         override;
 
-    // -------------------------------------------------------------------------
     // ISdDriver — opérations fichier
-    // -------------------------------------------------------------------------
     bool          exists(const char* path)                                        override;
     bool          createDirectory(const char* path)                               override;
     bool          append(const char* path, const void* data, std::size_t length)  override;
@@ -70,6 +47,9 @@ private:
     bool     _mounted;
 
     uint8_t  _consecutiveFailures;
+    uint8_t  _remountAttempts;
+    uint32_t _lastRemountAttemptMs;
+    uint32_t _lastHealthCheckMs; // 👈 AJOUT : Timer pour espacer les tests d'état matériel
 };
 
 }  // namespace drivers

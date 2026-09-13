@@ -48,7 +48,7 @@ public:
 
 private:
 #ifdef ESP32_TARGET
-    SPIClass spi_;
+    SPIClass spi_{VSPI};
 #endif
     bool initialized_ = false;
 };
