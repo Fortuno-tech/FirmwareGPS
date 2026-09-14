@@ -196,9 +196,9 @@ bool Sim7600GnssDriver::readPosition(types::GpsData& position)
     if (!parsed) {
         _logger.debug(logging::TAG_GPS, "CGNSSINFO parse failed reason=%s", failureReason);
     } else if (!_hasReportedFixState || _lastReportedFixValid != position.fixValid) {
-        _logger.info(logging::TAG_GPS, "%s fix mode=%u satellites=%u HDOP=%.2f PDOP=%.2f",
-                     position.fixValid ? "valid" : "no", position.fixMode,
-                     position.satellites, position.hdop, position.pdop);
+        _logger.info(logging::TAG_GPS, "%s fix longitude=%.6f latitude=%.6f altitude=%.1fm vitesse=%.1fkm/h",
+                 position.fixValid ? "valid" : "no", position.longitude,
+                 position.latitude, position.altitudeMeters, position.speedKmh);
         _hasReportedFixState = true;
         _lastReportedFixValid = position.fixValid;
     }

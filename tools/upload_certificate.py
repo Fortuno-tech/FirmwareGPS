@@ -4,7 +4,6 @@
 The certificate is uploaded directly to the modem certificate store with
 AT+CCERTDOWN. This tool never reads or handles MQTT credentials.
 """
-
 import argparse
 import sys
 import time
@@ -14,7 +13,6 @@ try:
     import serial
 except ImportError:
     serial = None
-
 
 BAUDRATE = 115200
 CERTIFICATE_NAME = "hivemq-ca.pem"
