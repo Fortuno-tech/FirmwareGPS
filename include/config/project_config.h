@@ -25,10 +25,6 @@ namespace project {
 /// Version sémantique du firmware (MAJOR.MINOR.PATCH)
 constexpr const char* FIRMWARE_VERSION = "1.0.0";
 
-/// Préfixe de l'identifiant unique du boîtier, complété par le MAC ESP32 ou
-/// un identifiant de provisioning à l'exécution
-constexpr const char* DEVICE_ID_PREFIX = "FORTICO-";
-
 /// Nom du projet, utilisé dans les logs et rapports de diagnostic
 constexpr const char* PROJECT_NAME = "Fortico";
 

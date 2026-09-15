@@ -35,5 +35,8 @@ constexpr float INVALID_FUEL_PERCENTAGE = -1.0f;  ///< FuelLevel::percentage si 
 constexpr uint32_t INVALID_TIMESTAMP = 0;          ///< horodatage non encore acquis (avant premier RTC_SYNCED, Document 07 §4)
 constexpr uint8_t INVALID_SATELLITE_COUNT = 0;     ///< GpsData::satellites avant premier fix
 
+constexpr float INVALID_ALTITUDE = -999.0f;
+constexpr float INVALID_DOP = -1.0f;
+
 }  // namespace constants
 }  // namespace fortico

@@ -13,16 +13,12 @@
  */
 #pragma once
 
-#include <cstdint>
+#include "config/project_config.h"
 
 namespace fortico {
 namespace constants {
 
-constexpr uint8_t FW_VERSION_MAJOR = 1;
-constexpr uint8_t FW_VERSION_MINOR = 0;
-constexpr uint8_t FW_VERSION_PATCH = 0;
-
-constexpr const char* FW_VERSION_STRING = "1.0.0";
+constexpr const char* FW_VERSION_STRING = project::FIRMWARE_VERSION;
 
 }  // namespace constants
 }  // namespace fortico

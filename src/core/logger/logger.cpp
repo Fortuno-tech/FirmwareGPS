@@ -7,6 +7,8 @@
 #include <cstdio>
 #include <cstring>
 
+#include "utils/timer_utils.h"
+
 namespace fortico {
 namespace core {
 
@@ -117,7 +119,7 @@ void Logger::logVariadic(logging::Level level, const char* tag, const char* fmt,
 
     LogEntry entry{};
     entry.level = level;
-    entry.timestampMs = 0;  // TODO(Sprint 1, utils::Timer) : renseigner via Timer::millis() une fois lié
+    entry.timestampMs = utils::Timer::millis();
 
     std::strncpy(entry.tag, tag != nullptr ? tag : "?", sizeof(entry.tag) - 1);
     entry.tag[sizeof(entry.tag) - 1] = '\0';

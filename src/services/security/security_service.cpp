@@ -1,0 +1,252 @@
+#include "services/security/security_service.h"
+
+#include <cstring>
+
+#include "config/security_config.h"
+
+#ifdef ESP32_TARGET
+#include <esp_system.h>
+#include <mbedtls/gcm.h>
+#include <mbedtls/md.h>
+#endif
+
+namespace fortico {
+namespace services {
+
+SecurityService::SecurityService(interfaces::INvsDriver& nvsDriver)
+    : _nvsDriver(nvsDriver), _rootKey{}, _running(false), _keyLoaded(false) {}
+
+bool SecurityService::start()
+{
+    if (!_nvsDriver.isInitialized()) return false;
+    if (!_nvsDriver.open(security::NVS_NAMESPACE, false)) return false;
+    _keyLoaded = _nvsDriver.getBlob(security::NVS_KEY_SECURITY_ROOT,
+                                    _rootKey, KeySize);
+    _nvsDriver.close();
+    _running = _keyLoaded;
+    return _running;
+}
+
+void SecurityService::stop()
+{
+    std::memset(_rootKey, 0, sizeof(_rootKey));
+    _keyLoaded = false;
+    _running = false;
+}
+
+bool SecurityService::isRunning() const { return _running && _keyLoaded; }
+
+bool SecurityService::provisionRootKey(const uint8_t* key, std::size_t length)
+{
+    if (key == nullptr || length != KeySize || !_nvsDriver.isInitialized()) return false;
+    if (_nvsDriver.open(security::NVS_NAMESPACE, true)) {
+        uint8_t existingKey[KeySize]{};
+        const bool alreadyProvisioned = _nvsDriver.getBlob(
+            security::NVS_KEY_SECURITY_ROOT, existingKey, sizeof(existingKey));
+        _nvsDriver.close();
+        if (alreadyProvisioned) return false;
+    }
+    if (!_nvsDriver.open(security::NVS_NAMESPACE, false)) return false;
+    const bool stored = _nvsDriver.putBlob(security::NVS_KEY_SECURITY_ROOT, key, KeySize);
+    _nvsDriver.close();
+    if (stored) {
+        std::memcpy(_rootKey, key, KeySize);
+        _keyLoaded = true;
+        _running = true;
+    }
+    return stored;
+}
+
+bool SecurityService::provision(const uint8_t* key, std::size_t keyLength,
+    const types::MqttCredentials& credentials, const char* deviceId,
+    const char* vehicleId)
+{
+    if (key == nullptr || keyLength != KeySize || deviceId == nullptr ||
+        vehicleId == nullptr || deviceId[0] == '\0' || vehicleId[0] == '\0' ||
+        credentials.clientId[0] == '\0' ||
+        credentials.username[0] == '\0' || credentials.password[0] == '\0') {
+        return false;
+    }
+    if (!provisionRootKey(key, keyLength) ||
+        !storeMqttCredentials(credentials) || !storeDeviceId(deviceId) ||
+        !storeVehicleId(vehicleId)) {
+        if (_nvsDriver.isInitialized() &&
+            _nvsDriver.open(security::NVS_NAMESPACE, false)) {
+            _nvsDriver.remove(security::NVS_KEY_MQTT_CREDS);
+            _nvsDriver.remove(security::NVS_KEY_DEVICE_ID);
+            _nvsDriver.remove(security::NVS_KEY_VEHICLE_ID);
+            _nvsDriver.remove(security::NVS_KEY_SECURITY_ROOT);
+            _nvsDriver.close();
+        }
+        stop();
+        return false;
+    }
+    return true;
+}
+
+bool SecurityService::hashBadge(const char* normalizedUid, uint8_t* digest,
+                                std::size_t digestSize) const
+{
+    if (!isRunning() || normalizedUid == nullptr || digest == nullptr ||
+        digestSize < HmacSize) return false;
+#ifdef ESP32_TARGET
+    const mbedtls_md_info_t* info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    return info != nullptr && mbedtls_md_hmac(info, _rootKey, KeySize,
+        reinterpret_cast<const unsigned char*>(normalizedUid),
+        std::strlen(normalizedUid), digest) == 0;
+#else
+    (void)normalizedUid; (void)digest; (void)digestSize;
+    return false;
+#endif
+}
+
+bool SecurityService::encrypt(const uint8_t* plaintext, std::size_t plaintextSize,
+                              const uint8_t* nonce, std::size_t nonceSize,
+                              uint8_t* ciphertext, std::size_t ciphertextSize,
+                              uint8_t* tag, std::size_t tagSize) const
+{
+    if (!isRunning() || plaintext == nullptr || nonce == nullptr || ciphertext == nullptr ||
+        tag == nullptr || nonceSize != GcmNonceSize || tagSize != GcmTagSize ||
+        ciphertextSize < plaintextSize) return false;
+#ifdef ESP32_TARGET
+    mbedtls_gcm_context context;
+    mbedtls_gcm_init(&context);
+    const int result = mbedtls_gcm_setkey(&context, MBEDTLS_CIPHER_ID_AES,
+                                          _rootKey, KeySize * 8U) == 0
+        ? mbedtls_gcm_crypt_and_tag(&context, MBEDTLS_GCM_ENCRYPT,
+            plaintextSize, nonce, nonceSize, nullptr, 0U, plaintext,
+            ciphertext, tagSize, tag) : -1;
+    mbedtls_gcm_free(&context);
+    return result == 0;
+#else
+    (void)plaintext; (void)plaintextSize; (void)nonce; (void)nonceSize;
+    (void)ciphertext; (void)ciphertextSize; (void)tag; (void)tagSize;
+    return false;
+#endif
+}
+
+bool SecurityService::decrypt(const uint8_t* ciphertext, std::size_t ciphertextSize,
+                              const uint8_t* nonce, std::size_t nonceSize,
+                              const uint8_t* tag, std::size_t tagSize,
+                              uint8_t* plaintext, std::size_t plaintextSize) const
+{
+    if (!isRunning() || ciphertext == nullptr || nonce == nullptr || tag == nullptr ||
+        plaintext == nullptr || nonceSize != GcmNonceSize || tagSize != GcmTagSize ||
+        plaintextSize < ciphertextSize) return false;
+#ifdef ESP32_TARGET
+    mbedtls_gcm_context context;
+    mbedtls_gcm_init(&context);
+    const int result = mbedtls_gcm_setkey(&context, MBEDTLS_CIPHER_ID_AES,
+                                          _rootKey, KeySize * 8U) == 0
+        ? mbedtls_gcm_auth_decrypt(&context, ciphertextSize, nonce, nonceSize,
+            nullptr, 0U, tag, tagSize, ciphertext, plaintext) : -1;
+    mbedtls_gcm_free(&context);
+    return result == 0;
+#else
+    (void)ciphertext; (void)ciphertextSize; (void)nonce; (void)nonceSize;
+    (void)tag; (void)tagSize; (void)plaintext; (void)plaintextSize;
+    return false;
+#endif
+}
+
+bool SecurityService::storeMqttCredentials(
+    const types::MqttCredentials& credentials)
+{
+    if (!isRunning()) return false;
+    struct EncryptedCredentials {
+        uint8_t nonce[GcmNonceSize];
+        uint8_t ciphertext[sizeof(types::MqttCredentials)];
+        uint8_t tag[GcmTagSize];
+    } blob{};
+#ifdef ESP32_TARGET
+    esp_fill_random(blob.nonce, sizeof(blob.nonce));
+#else
+    return false;
+#endif
+    if (!encrypt(reinterpret_cast<const uint8_t*>(&credentials),
+                 sizeof(credentials), blob.nonce, sizeof(blob.nonce),
+                 blob.ciphertext, sizeof(blob.ciphertext), blob.tag,
+                 sizeof(blob.tag))) return false;
+    if (!_nvsDriver.open(security::NVS_NAMESPACE, false)) return false;
+    const bool stored = _nvsDriver.putBlob(security::NVS_KEY_MQTT_CREDS,
+                                           &blob, sizeof(blob));
+    _nvsDriver.close();
+    return stored;
+}
+
+bool SecurityService::loadMqttCredentials(types::MqttCredentials& credentials) const
+{
+    if (!isRunning()) return false;
+    struct EncryptedCredentials {
+        uint8_t nonce[GcmNonceSize];
+        uint8_t ciphertext[sizeof(types::MqttCredentials)];
+        uint8_t tag[GcmTagSize];
+    } blob{};
+    if (!_nvsDriver.open(security::NVS_NAMESPACE, true)) return false;
+    const bool loaded = _nvsDriver.getBlob(security::NVS_KEY_MQTT_CREDS,
+                                           &blob, sizeof(blob));
+    _nvsDriver.close();
+    return loaded && decrypt(blob.ciphertext, sizeof(blob.ciphertext),
+                             blob.nonce, sizeof(blob.nonce), blob.tag,
+                             sizeof(blob.tag),
+                             reinterpret_cast<uint8_t*>(&credentials),
+                             sizeof(credentials));
+}
+
+bool SecurityService::storeDeviceId(const char* deviceId)
+{
+    if (!isRunning() || deviceId == nullptr) return false;
+    if (!_nvsDriver.open(security::NVS_NAMESPACE, false)) return false;
+    const bool stored = _nvsDriver.putString(security::NVS_KEY_DEVICE_ID,
+                                             deviceId);
+    _nvsDriver.close();
+    return stored;
+}
+
+bool SecurityService::loadDeviceId(char* deviceId, std::size_t size) const
+{
+    if (!isRunning() || deviceId == nullptr || size == 0U) return false;
+    if (!_nvsDriver.open(security::NVS_NAMESPACE, true)) return false;
+    const bool loaded = _nvsDriver.getString(security::NVS_KEY_DEVICE_ID,
+                                             deviceId, size);
+    _nvsDriver.close();
+    return loaded;
+}
+
+bool SecurityService::storeVehicleId(const char* vehicleId)
+{
+    if (!isRunning() || vehicleId == nullptr || vehicleId[0] == '\0') return false;
+    if (!_nvsDriver.open(security::NVS_NAMESPACE, false)) return false;
+    const bool stored = _nvsDriver.putString(security::NVS_KEY_VEHICLE_ID,
+                                             vehicleId);
+    _nvsDriver.close();
+    return stored;
+}
+
+bool SecurityService::loadVehicleId(char* vehicleId, std::size_t size) const
+{
+    if (!isRunning() || vehicleId == nullptr || size == 0U) return false;
+    if (!_nvsDriver.open(security::NVS_NAMESPACE, true)) return false;
+    const bool loaded = _nvsDriver.getString(security::NVS_KEY_VEHICLE_ID,
+                                             vehicleId, size);
+    _nvsDriver.close();
+    return loaded;
+}
+
+bool SecurityService::clearProvisioning()
+{
+    if (!_nvsDriver.isInitialized() ||
+        !_nvsDriver.open(security::NVS_NAMESPACE, false)) return false;
+    const bool cleared =
+        _nvsDriver.remove(security::NVS_KEY_MQTT_CREDS) &&
+        _nvsDriver.remove(security::NVS_KEY_DEVICE_ID) &&
+        _nvsDriver.remove(security::NVS_KEY_VEHICLE_ID) &&
+        _nvsDriver.remove(security::NVS_KEY_SECURITY_ROOT) &&
+        _nvsDriver.remove(security::NVS_KEY_OTA_PUBKEY);
+    _nvsDriver.close();
+    stop();
+    return cleared;
+}
+
+}  // namespace services
+}  // namespace fortico

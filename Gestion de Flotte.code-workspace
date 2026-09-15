@@ -2,8 +2,10 @@
 	"folders": [
 		{
 			"name": "Gestion de Flotte",
-			"path": "."
+			"path": "Gestion de Flotte"
 		}
 	],
-	"settings": {}
+	"settings": {
+		"java.configuration.updateBuildConfiguration": "interactive"
+	}
 }

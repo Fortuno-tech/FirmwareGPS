@@ -32,6 +32,8 @@ inline const char* gpioToName(uint8_t gpio) {
         case fortico::pins::SD_SCK:         return "SD_SCK";
         case fortico::pins::SD_MOSI:        return "SD_MOSI";
         case fortico::pins::SD_MISO:        return "SD_MISO";
+        case fortico::pins::PN532_IRQ:      return "PN532_IRQ";
+        case fortico::pins::PN532_RESET:    return "PN532_RESET";
         case fortico::pins::SIM7600_TX1:    return "SIM7600_TX1";
         case fortico::pins::SIM7600_RX1:    return "SIM7600_RX1";
         case fortico::pins::RELAY_CTRL:     return "RELAY_CTRL";

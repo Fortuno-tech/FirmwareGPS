@@ -31,6 +31,10 @@ EventBus::~EventBus() {
 }
 
 bool EventBus::init() {
+    if (_initialized) {
+        return true;
+    }
+
     _inputQueue = xQueueCreate(tasks::QUEUE_LEN_EVENT_BUS_IN, sizeof(types::Event));
     if (_inputQueue == nullptr) {
         return false;
@@ -38,6 +42,8 @@ bool EventBus::init() {
 
     _subMutex = xSemaphoreCreateMutex();
     if (_subMutex == nullptr) {
+        vQueueDelete(_inputQueue);
+        _inputQueue = nullptr;
         return false;
     }
 
@@ -46,7 +52,7 @@ bool EventBus::init() {
 }
 
 bool EventBus::start() {
-    if (!_initialized) {
+    if (!_initialized || _taskHandle != nullptr) {
         return false;
     }
 
@@ -59,7 +65,11 @@ bool EventBus::start() {
         &_taskHandle,
         tasks::CORE_APP_CRITICAL);
 
-    return result == pdTRUE;
+    if (result != pdTRUE) {
+        _taskHandle = nullptr;
+        return false;
+    }
+    return true;
 }
 
 constants::PublishResult EventBus::publish(const types::Event& event) {
@@ -79,9 +89,19 @@ void EventBus::subscribe(constants::EventID id, interfaces::IEventListener* list
         return;
     }
 
+    if (!_initialized || _subMutex == nullptr) {
+        return;
+    }
+
     xSemaphoreTake(_subMutex, portMAX_DELAY);
 
     TopicSubscription& sub = _subscriptions[idx];
+    for (uint8_t i = 0; i < sub.listenerCount; ++i) {
+        if (sub.listeners[i] == listener) {
+            xSemaphoreGive(_subMutex);
+            return;
+        }
+    }
     if (sub.listenerCount < tasks::EVENT_BUS_MAX_LISTENERS_PER_TOPIC) {
         sub.listeners[sub.listenerCount] = listener;
         sub.listenerCount++;
@@ -101,6 +121,10 @@ void EventBus::unsubscribe(constants::EventID id, interfaces::IEventListener* li
         return;
     }
 
+    if (!_initialized || _subMutex == nullptr) {
+        return;
+    }
+
     xSemaphoreTake(_subMutex, portMAX_DELAY);
 
     TopicSubscription& sub = _subscriptions[idx];
@@ -114,6 +138,7 @@ void EventBus::unsubscribe(constants::EventID id, interfaces::IEventListener* li
             break;
         }
     }
+    sub.used = sub.listenerCount != 0U;
 
     xSemaphoreGive(_subMutex);
 }
@@ -122,6 +147,9 @@ void EventBus::taskEntry(void* param) {
 }
 
 bool EventBus::pumpOnce() {
+    if (!_initialized || _inputQueue == nullptr) {
+        return false;
+    }
     types::Event event{};
     if (xQueueReceive(_inputQueue, &event, 0) == pdTRUE) {
         dispatch(event);
@@ -150,17 +178,25 @@ void EventBus::dispatch(const types::Event& event) {
         return;
     }
 
+    interfaces::IEventListener* listeners[tasks::EVENT_BUS_MAX_LISTENERS_PER_TOPIC]{};
+    uint8_t listenerCount = 0U;
+
+    if (_subMutex == nullptr) {
+        return;
+    }
     xSemaphoreTake(_subMutex, portMAX_DELAY);
+    const TopicSubscription& sub = _subscriptions[idx];
+    listenerCount = sub.listenerCount;
+    for (uint8_t i = 0; i < listenerCount; ++i) {
+        listeners[i] = sub.listeners[i];
+    }
+    xSemaphoreGive(_subMutex);
 
-
-    TopicSubscription& sub = _subscriptions[idx];
-    if (sub.used) {
-        for (uint8_t i = 0; i < sub.listenerCount; ++i) {
-            sub.listeners[i]->onEvent(event);
+    for (uint8_t i = 0; i < listenerCount; ++i) {
+        if (listeners[i] != nullptr) {
+            listeners[i]->onEvent(event);
         }
     }
-
-    xSemaphoreGive(_subMutex);
 }
 
 const char* EventBus::eventIdToTopic(constants::EventID id) {
@@ -190,6 +226,10 @@ const char* EventBus::eventIdToTopic(constants::EventID id) {
         case EventID::OTA_SUCCEEDED:           return "ota_succeeded";
         case EventID::SYSTEM_SELFTEST_PASSED:  return "system_selftest_passed";
         case EventID::SYSTEM_FAULT:            return "system_fault";
+        case EventID::REMOTE_STOP_COMMAND:     return "remote_stop_command";
+        case EventID::REMOTE_KILL_COMMAND:     return "remote_kill_command";
+        case EventID::SOS_ACK_RECEIVED:        return "sos_ack_received";
+        case EventID::BADGE_REMOVED:           return "badge_removed";
         default:                               return "unknown";
     }
 }

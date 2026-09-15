@@ -42,11 +42,27 @@ constexpr const char* NVS_KEY_WIFI_CREDS = "wifi_creds";
 /// Identifiants MQTT chiffrés
 constexpr const char* NVS_KEY_MQTT_CREDS = "mqtt_creds";
 
+/// Identifiant stable du boîtier utilisé comme clientId MQTT
+constexpr const char* NVS_KEY_DEVICE_ID = "device_id";
+
+/// Identifiant métier stable du véhicule utilisé dans les topics MQTT
+constexpr const char* NVS_KEY_VEHICLE_ID = "vehicle_id";
+
 /// Identifiants APN chiffrés
 constexpr const char* NVS_KEY_APN_CREDS = "apn_creds";
 
 /// Liste blanche des UID RFID autorisés
 constexpr const char* NVS_KEY_RFID_WHITELIST = "rfid_whitelist";
+
+/// Marqueur indiquant que le badge RFID initial a déjà été ajouté.
+// ESP32 Preferences restricts NVS keys to 15 characters.
+constexpr const char* NVS_KEY_RFID_DEFAULT_SEEDED = "rfid_seeded";
+
+/// Clé racine provisionnée par l'outil de fabrication, jamais codée en dur.
+constexpr const char* NVS_KEY_SECURITY_ROOT = "security_root";
+
+/// Clé publique Ed25519 pour la vérification des mises à jour OTA
+constexpr const char* NVS_KEY_OTA_PUBKEY = "ota_pubkey";
 
 /// Compteur de séquence télémétrie 
 constexpr const char* NVS_KEY_DEVICE_SEQ = "device_seq";
