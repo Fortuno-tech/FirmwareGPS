@@ -52,6 +52,11 @@ reliable RTC requires a timestamp; the absolute difference from device time
 must be at most 60 seconds (the boundary is inclusive). If the clock is not
 reliable, the time-window check is inactive; the persisted sequence and MAC
 checks remain mandatory. The timestamp is still authenticated if supplied.
+The firmware logs that the temporal window is inactive. Native test
+`testUnsyncedClockUsesPersistentSequenceWithoutTimeWindow` exercises an
+untimestamped signed command accepted once and rejected as a replay after the
+sequence state is persisted. This is a software test, not a power-on test with
+the SIM7600 and RTC disconnected.
 
 ### Canonical HMAC-SHA256 input
 

@@ -261,6 +261,25 @@ void testExpiredCommandIsRejected()
     TEST_ASSERT_EQUAL_STRING("EXPIRED", reason);
 }
 
+void testUnsyncedClockUsesPersistentSequenceWithoutTimeWindow()
+{
+    test::MockNvsDriver nvs;
+    initializeReplayState(nvs);
+    TestMacVerifier verifier;
+    services::MqttCommandSecurity security(nvs, verifier);
+    services::MqttCommandRequest request = stopRequest(1U, "cmd-no-clock");
+    request.hasTimestamp = false;
+    sign(request);
+    const char* reason = nullptr;
+
+    TEST_ASSERT_TRUE(security.authorize(request, "DEVICE-1", false, 0U,
+                                        false, reason));
+    TEST_ASSERT_NULL(reason);
+    TEST_ASSERT_FALSE(security.authorize(request, "DEVICE-1", false, 0U,
+                                         false, reason));
+    TEST_ASSERT_EQUAL_STRING("REPLAY", reason);
+}
+
 void testUnenrolledBadgeCannotAuthorizeEngineOn()
 {
     test::MockNvsDriver nvs;
@@ -308,6 +327,7 @@ int main()
     RUN_TEST(testReplayedCommandIsRejected);
     RUN_TEST(testPreviouslyAcceptedIdIsRejectedWithHigherSequence);
     RUN_TEST(testExpiredCommandIsRejected);
+    RUN_TEST(testUnsyncedClockUsesPersistentSequenceWithoutTimeWindow);
     RUN_TEST(testUnenrolledBadgeCannotAuthorizeEngineOn);
     RUN_TEST(testEngineOnRemainsBlockedAfterKillEvenIfAuthStateIsStillActive);
     return UNITY_END();

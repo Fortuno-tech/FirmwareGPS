@@ -273,6 +273,10 @@ void MqttCommandHandler::handle(const drivers::MqttIncomingMessage& message)
     char deviceId[64]{};
     const bool reliableClock = _rtcDriver.hasReliableTime();
     const uint64_t nowTimestamp = reliableClock ? _rtcDriver.timestamp() : 0U;
+    if (!reliableClock) {
+        _logger.warn(logging::TAG_MQTT,
+                     "[MQTT][CMD] temporal validity window inactive; persistent sequence and ID state remains the anti-replay guard");
+    }
     const bool activeAuthentication =
         _authenticationService->decision().state == types::AuthState::AUTHENTICATED;
     const char* rejectionReason = "DEVICE_ID_UNAVAILABLE";
