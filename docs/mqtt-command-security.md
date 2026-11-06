@@ -13,6 +13,39 @@ topic. A command payload is a JSON object with these fields:
 }
 ```
 
+The receipt ACK on `fleet/<vehicle-id>/cmd/ack` means only that the command was
+received and accepted for processing (or rejected); it does not mean the relay
+has executed the action. Its `phase` field is `RECEIVED_ACCEPTED` or
+`RECEIVED_REJECTED`. A lost receipt ACK does not cancel an already queued
+command.
+
+For relay commands (`STOP`, `ENGINE_OFF`, `KILL`, and `ENGINE_ON`), the
+controller publishes a second confirmation on
+`fleet/<vehicle-id>/engine` only after `RelayManager` has processed the relay
+action. The confirmation is correlated by command `id`:
+
+```json
+{
+  "event": "command_execution",
+  "id": "command-unique-id",
+  "deviceId": "device-id",
+  "vehicleId": "vehicle-id",
+  "timestamp": "2026-11-06T12:34:56Z",
+  "command": "ENGINE_ON",
+  "success": true,
+  "error": null,
+  "relay": "ENGAGED",
+  "firmware": "version"
+}
+```
+
+`success` is true only when the controller permits the action, the relay driver
+reports success, and the final relay state matches the requested action.
+Failures include a stable `error` code and actual `relay` state. The message
+uses the telemetry outbox, so a broker outage may delay it; delivery is
+at-least-once and consumers should deduplicate using `deviceId` and
+`outboxSeq`. Do not infer completion from the receipt ACK.
+
 An accepted `KILL` also clears local authentication and latches engine-on
 rejection for the current boot, matching the controller's kill lock. A new
 boot is still cut by the normal startup policy.

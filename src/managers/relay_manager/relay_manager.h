@@ -19,6 +19,7 @@ public:
 	bool submit(const types::RelayCommand& command);
 	types::RelayState state() const;
 	bool hasPendingCommand() const;
+	bool lastCommandSucceeded() const;
 
 private:
 	drivers::RelayDriver& _driver;
@@ -26,6 +27,7 @@ private:
 	types::RelayCommand _pending;
 	bool _initialized;
 	bool _pendingCommand;
+	bool _lastCommandSucceeded;
 };
 
 }  // namespace managers

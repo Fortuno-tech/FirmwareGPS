@@ -3,6 +3,7 @@
 #include "app/system_controller/remote_relay_command_mailbox.hpp"
 
 using fortico::app::RemoteRelayCommandMailbox;
+using fortico::app::RemoteRelayCommand;
 using fortico::types::RelayCmd;
 using fortico::types::RelayCommand;
 using fortico::types::RelaySource;
@@ -26,12 +27,13 @@ void testRemoteCommandsRemainFifoAndBounded()
 	TEST_ASSERT_FALSE(mailbox.submit(
 		{RelayCmd::ENGAGE, RelaySource::REMOTE_COMMAND, 5U}));
 
-	RelayCommand received{};
+	RemoteRelayCommand received{};
 	for (const RelayCommand& expected : commands) {
 		TEST_ASSERT_TRUE(mailbox.receive(received));
 		TEST_ASSERT_EQUAL_INT(static_cast<int>(expected.cmd),
-							  static_cast<int>(received.cmd));
-		TEST_ASSERT_EQUAL_UINT64(expected.timestamp, received.timestamp);
+							  static_cast<int>(received.relayCommand.cmd));
+		TEST_ASSERT_EQUAL_UINT64(expected.timestamp,
+								 received.relayCommand.timestamp);
 	}
 	TEST_ASSERT_FALSE(mailbox.receive(received));
 }
@@ -42,7 +44,22 @@ void testResetDiscardsQueuedCommands()
 	TEST_ASSERT_TRUE(mailbox.submit(
 		{RelayCmd::EMERGENCY_CUT, RelaySource::REMOTE_COMMAND, 9U}));
 	mailbox.reset();
-	RelayCommand received{};
+	RemoteRelayCommand received{};
+	TEST_ASSERT_FALSE(mailbox.receive(received));
+}
+
+void testCorrelatedCommandKeepsIdAndCanBeConsumedOnlyOnce()
+{
+	RemoteRelayCommandMailbox mailbox;
+	const RelayCommand relayCommand{
+		RelayCmd::CUT, RelaySource::REMOTE_COMMAND, 12U};
+	TEST_ASSERT_TRUE(mailbox.submit(relayCommand, "cmd-12", "STOP"));
+
+	RemoteRelayCommand received{};
+	TEST_ASSERT_TRUE(mailbox.receive(received));
+	TEST_ASSERT_TRUE(received.hasCorrelation);
+	TEST_ASSERT_EQUAL_STRING("cmd-12", received.commandId);
+	TEST_ASSERT_EQUAL_STRING("STOP", received.commandName);
 	TEST_ASSERT_FALSE(mailbox.receive(received));
 }
 
@@ -56,5 +73,6 @@ int main()
 	UNITY_BEGIN();
 	RUN_TEST(testRemoteCommandsRemainFifoAndBounded);
 	RUN_TEST(testResetDiscardsQueuedCommands);
+	RUN_TEST(testCorrelatedCommandKeepsIdAndCanBeConsumedOnlyOnce);
 	return UNITY_END();
 }

@@ -21,6 +21,7 @@
 #include "managers/power_manager/power_manager.h"
 #include "middleware/mqtt_client/cellular_mqtt_client.h"
 #include "app/system_controller/remote_relay_command_mailbox.hpp"
+#include "app/system_controller/remote_command_execution.hpp"
 #include "app/system_controller/system_event_mailbox.hpp"
 #include "services/authentication/authentication_service.h"
 #include "services/diagnostics/diagnostics_service.h"
@@ -120,6 +121,7 @@ private:
 	ConnectivityTask& _connectivityTask;
 	RemoteRelayCommandMailbox& _remoteRelayCommandMailbox;
 	SystemEventMailbox& _systemEventMailbox;
+	RemoteCommandExecution _remoteCommandExecution;
 	bool _initialized;
 	bool _running;
 	BootStage _bootStage;
@@ -150,6 +152,11 @@ private:
 	void processSystemEvents();
 	void processEvent(const types::Event& event);
 	void processRemoteRelayCommands();
+	void beginRemoteExecution(const RemoteRelayCommand& command,
+							  bool accepted,
+							  types::RelayState expectedRelayState,
+							  const char* error);
+	void publishRemoteExecutionResult();
 };
 
 }  // namespace app

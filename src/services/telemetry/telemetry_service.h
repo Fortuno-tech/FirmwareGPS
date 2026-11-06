@@ -42,6 +42,9 @@ public:
 	bool publishRfid(const char* uid, bool authorized,
 					const drivers::RtcDateTime* eventTime = nullptr);
 	bool publishEngine(types::RelayState relay, bool authorized);
+	bool publishCommandExecution(const char* id, const char* command,
+							 bool success, const char* error,
+							 types::RelayState relayState);
 	bool publishAlarm(const types::AlertEvent& alert);
 	bool publishStatus(bool mqttConnected, bool simConnected,
 					   bool gpsConnected, bool sdMounted);

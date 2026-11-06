@@ -390,6 +390,9 @@ void SystemController::update()
 
 	_relayManager.update();
 	_relayManager.process();
+	(void)_remoteCommandExecution.complete(
+		_relayManager.lastCommandSucceeded(), _relayManager.state());
+	publishRemoteExecutionResult();
 	const types::RelayState relayState = _relayManager.state();
 	if (!_relayStateKnown || relayState != _lastPublishedRelayState) {
 		_telemetryService.publishEngine(
@@ -461,6 +464,7 @@ void SystemController::stop()
 {
 	_remoteRelayCommandMailbox.reset();
 	_systemEventMailbox.reset();
+	_remoteCommandExecution.reset();
 	_relayManager.submit({types::RelayCmd::CUT, types::RelaySource::AUTH,
 						  utils::Timer::millis()});
 	_relayManager.process();
@@ -563,61 +567,110 @@ bool SystemController::submitRemoteRelayCommand(types::RelayCmd command,
 
 void SystemController::processRemoteRelayCommands()
 {
-	types::RelayCommand command{};
-	while (_remoteRelayCommandMailbox.receive(command)) {
-		switch (command.cmd) {
-			case types::RelayCmd::CUT:
-				if (stateAfterRemoteCut(_systemState, _killLocked) ==
-					types::SystemState::ENGINE_KILL) {
-					_killLocked = true;
-					(void)_relayManager.submit({
+	if (_remoteCommandExecution.hasPendingResult()) return;
+	RemoteRelayCommand remoteCommand{};
+	if (!_remoteRelayCommandMailbox.receive(remoteCommand)) return;
+	const types::RelayCommand& command = remoteCommand.relayCommand;
+	switch (command.cmd) {
+		case types::RelayCmd::CUT: {
+			if (stateAfterRemoteCut(_systemState, _killLocked) ==
+				types::SystemState::ENGINE_KILL) {
+				_killLocked = true;
+				const bool submitted = _relayManager.submit({
 						types::RelayCmd::EMERGENCY_CUT,
 						types::RelaySource::REMOTE_COMMAND, command.timestamp});
-					_telemetryService.setActiveTracking(false);
-					break;
-				}
-				_logger.info(logging::TAG_SYSTEM_CONTROLLER,
-							 "commande distante STOP traitee par la tache de controle");
-				(void)_relayManager.submit(command);
+				beginRemoteExecution(
+					remoteCommand, submitted,
+					types::RelayState::EMERGENCY_CUT,
+					submitted ? nullptr : "RELAY_QUEUE_REJECTED");
 				_telemetryService.setActiveTracking(false);
-				if (_systemState == types::SystemState::SOS_STATE) {
-					_alertManager.setPattern(managers::AlertPattern::SOS);
-				} else {
-					transitionTo(types::SystemState::WAIT_BADGE);
-					_alertManager.setPattern(managers::AlertPattern::WAIT_BADGE);
-				}
-				break;
-
-			case types::RelayCmd::EMERGENCY_CUT:
-				_killLocked = true;
-				_authenticationService.clearAuthentication();
-				_logger.warn(logging::TAG_SYSTEM_CONTROLLER,
-							 "commande distante KILL appliquee par la tache de controle; relais verrouille");
-				transitionTo(types::SystemState::ENGINE_KILL);
-				(void)_relayManager.submit(command);
-				_telemetryService.setActiveTracking(false);
-				break;
-
-			case types::RelayCmd::ENGAGE: {
-				const bool localAuthenticationActive =
-					_authenticationService.decision().state ==
-					types::AuthState::AUTHENTICATED;
-				if (!remoteEngineOnMayBeApplied(
-						_systemState, _killLocked,
-						localAuthenticationActive)) {
-					_logger.warn(logging::TAG_SYSTEM_CONTROLLER,
-								 "commande distante ENGINE_ON refusee par la tache de controle (authentification ou verrou KILL)");
-					break;
-				}
-				if (_relayManager.submit(command)) {
-					transitionTo(types::SystemState::TRACKING_ACTIVE);
-					_telemetryService.setActiveTracking(true);
-					_alertManager.setPattern(managers::AlertPattern::TRACKING_OK);
-				}
 				break;
 			}
+			_logger.info(logging::TAG_SYSTEM_CONTROLLER,
+						 "commande distante STOP traitee par la tache de controle");
+			const bool submitted = _relayManager.submit(command);
+			beginRemoteExecution(remoteCommand, submitted,
+								 types::RelayState::LOCKED,
+								 submitted ? nullptr : "RELAY_QUEUE_REJECTED");
+			_telemetryService.setActiveTracking(false);
+			if (_systemState == types::SystemState::SOS_STATE) {
+				_alertManager.setPattern(managers::AlertPattern::SOS);
+			} else {
+				transitionTo(types::SystemState::WAIT_BADGE);
+				_alertManager.setPattern(managers::AlertPattern::WAIT_BADGE);
+			}
+			break;
+		}
+
+		case types::RelayCmd::EMERGENCY_CUT: {
+			_killLocked = true;
+			_authenticationService.clearAuthentication();
+			const bool submitted = _relayManager.submit(command);
+			beginRemoteExecution(
+				remoteCommand, submitted, types::RelayState::EMERGENCY_CUT,
+				submitted ? nullptr : "RELAY_QUEUE_REJECTED");
+			_logger.warn(logging::TAG_SYSTEM_CONTROLLER,
+						 "commande distante KILL appliquee par la tache de controle; relais verrouille");
+			transitionTo(types::SystemState::ENGINE_KILL);
+			_telemetryService.setActiveTracking(false);
+			break;
+		}
+
+		case types::RelayCmd::ENGAGE: {
+			const bool localAuthenticationActive =
+				_authenticationService.decision().state ==
+				types::AuthState::AUTHENTICATED;
+			if (!remoteEngineOnMayBeApplied(
+					_systemState, _killLocked, localAuthenticationActive)) {
+				beginRemoteExecution(
+					remoteCommand, false, types::RelayState::ENGAGED,
+					"CONTROL_POLICY_REJECTED");
+				_logger.warn(logging::TAG_SYSTEM_CONTROLLER,
+							 "commande distante ENGINE_ON refusee par la tache de controle (authentification ou verrou KILL)");
+				break;
+			}
+			const bool submitted = _relayManager.submit(command);
+			beginRemoteExecution(
+				remoteCommand, submitted, types::RelayState::ENGAGED,
+				submitted ? nullptr : "RELAY_QUEUE_REJECTED");
+			if (submitted) {
+				transitionTo(types::SystemState::TRACKING_ACTIVE);
+				_telemetryService.setActiveTracking(true);
+				_alertManager.setPattern(managers::AlertPattern::TRACKING_OK);
+			}
+			break;
 		}
 	}
+}
+
+void SystemController::beginRemoteExecution(
+	const RemoteRelayCommand& command, bool accepted,
+	types::RelayState expectedRelayState, const char* error)
+{
+	if (!command.hasCorrelation) return;
+	if (!_remoteCommandExecution.begin(
+			command.commandId, command.commandName, expectedRelayState,
+			accepted, error)) {
+		_logger.error(logging::TAG_SYSTEM_CONTROLLER,
+					  "impossible de suivre l'execution distante id=%s",
+					  command.commandId);
+	}
+}
+
+void SystemController::publishRemoteExecutionResult()
+{
+	RemoteCommandExecutionResult result{};
+	if (!_remoteCommandExecution.result(result)) return;
+	const char* error = result.error[0] == '\0' ? nullptr : result.error;
+	if (!_telemetryService.publishCommandExecution(
+			result.commandId, result.commandName, result.success, error,
+			result.relayState)) {
+		_logger.warn(logging::TAG_SYSTEM_CONTROLLER,
+					 "confirmation execution distante conservee pour nouvel essai id=%s",
+					 result.commandId);
+		return;
+	}
+	_remoteCommandExecution.markPublished();
 }
 
 void SystemController::transitionTo(types::SystemState newState)

@@ -160,6 +160,21 @@ bool TelemetryService::publishEngine(types::RelayState relay, bool authorized)
 	return enqueueChannel("engine", payload, std::strlen(payload), true);
 }
 
+bool TelemetryService::publishCommandExecution(const char* id,
+											  const char* command,
+											  bool success,
+											  const char* error,
+											  types::RelayState relayState)
+{
+	if (_sink == nullptr || _rtcDriver == nullptr ||
+		!MqttContext::build(_mqttContext, *_rtcDriver)) return false;
+	char payload[768]{};
+	if (!PayloadBuilder::commandExecution(
+			_mqttContext, id, command, success, error, relayState,
+			payload, sizeof(payload))) return false;
+	return enqueueChannel("engine", payload, std::strlen(payload), true);
+}
+
 bool TelemetryService::publishAlarm(const types::AlertEvent& alert)
 {
 	if (_sink == nullptr || _rtcDriver == nullptr ||

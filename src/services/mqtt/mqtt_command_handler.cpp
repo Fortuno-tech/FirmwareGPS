@@ -183,38 +183,38 @@ void MqttCommandHandler::setEventBus(core::EventBus* eventBus)
     _eventBus = eventBus;
 }
 
-bool MqttCommandHandler::queueAck(const char* id, const char* command,
-                                  bool success, const char* error)
+bool MqttCommandHandler::queueReceiptAck(const char* id, const char* command,
+                                         bool accepted, const char* error)
 {
     MqttDeviceContext context{};
     if (!MqttContext::build(context, _rtcDriver)) {
         _logger.warn(logging::TAG_MQTT,
-                     "[MQTT][ACK] context build failed id=%s", id);
+                     "[MQTT][RECEIPT_ACK] context build failed id=%s", id);
         return false;
     }
     char payload[768]{};
-    if (!PayloadBuilder::commandAck(context, id, command, success, error,
+    if (!PayloadBuilder::commandAck(context, id, command, accepted, error,
                                     payload, sizeof(payload))) {
         _logger.warn(logging::TAG_MQTT,
-                     "[MQTT][ACK] payload build failed id=%s", id);
+                     "[MQTT][RECEIPT_ACK] payload build failed id=%s", id);
         return false;
     }
     char topic[96]{};
     if (!MqttTopics::build(MqttIdentity::vehicleId(), MqttTopics::CMD_ACK,
                            topic, sizeof(topic))) {
         _logger.warn(logging::TAG_MQTT,
-                     "[MQTT][ACK] topic build failed id=%s", id);
+                     "[MQTT][RECEIPT_ACK] topic build failed id=%s", id);
         return false;
     }
     const bool queued = _queue.enqueue(topic, payload, std::strlen(payload), true);
     if (queued) {
         _logger.info(logging::TAG_MQTT,
-                     "[MQTT][ACK] queued id=%s success=%s",
-                     id, success ? "true" : "false");
+                     "[MQTT][RECEIPT_ACK] queued id=%s accepted=%s",
+                     id, accepted ? "true" : "false");
     } else {
         _logger.warn(logging::TAG_MQTT,
-                     "[MQTT][ACK] queue rejected id=%s success=%s",
-                     id, success ? "true" : "false");
+                     "[MQTT][RECEIPT_ACK] queue rejected id=%s accepted=%s",
+                     id, accepted ? "true" : "false");
     }
     return queued;
 }
@@ -256,7 +256,7 @@ void MqttCommandHandler::handle(const drivers::MqttIncomingMessage& message)
 
     if (!parseRequest(message.payload, message.payloadLength, request)) {
         audit(request, false, "INVALID_PAYLOAD", _rtcDriver.timestamp());
-        queueAck("unknown", "UNKNOWN", false, "INVALID_PAYLOAD");
+        queueReceiptAck("unknown", "UNKNOWN", false, "INVALID_PAYLOAD");
         return;
     }
 
@@ -265,7 +265,8 @@ void MqttCommandHandler::handle(const drivers::MqttIncomingMessage& message)
         _authenticationService == nullptr) {
         audit(request, false, "SECURITY_NOT_CONFIGURED",
               _rtcDriver.timestamp());
-        queueAck(request.id, request.command, false, "SECURITY_NOT_CONFIGURED");
+        queueReceiptAck(request.id, request.command, false,
+                        "SECURITY_NOT_CONFIGURED");
         return;
     }
 
@@ -291,7 +292,7 @@ void MqttCommandHandler::handle(const drivers::MqttIncomingMessage& message)
             std::strcmp(request.command, "ENGINE_OFF") == 0) {
             accepted = app::RemoteRelayCommandMailbox::instance().submit({
                 types::RelayCmd::CUT, types::RelaySource::REMOTE_COMMAND,
-                eventTimestamp});
+                eventTimestamp}, request.id, request.command);
             actionError = accepted ? nullptr : "ENGINE_OFF_REJECTED";
         } else if (std::strcmp(request.command, "KILL") == 0) {
             const types::GpsData& gps = _gpsService.data();
@@ -305,7 +306,8 @@ void MqttCommandHandler::handle(const drivers::MqttIncomingMessage& message)
             if (safeToKill) {
                 accepted = app::RemoteRelayCommandMailbox::instance().submit({
                     types::RelayCmd::EMERGENCY_CUT,
-                    types::RelaySource::REMOTE_COMMAND, eventTimestamp});
+                    types::RelaySource::REMOTE_COMMAND, eventTimestamp},
+                    request.id, request.command);
             }
             if (accepted) {
                 _commandLatch.latchAfterKill();
@@ -324,7 +326,8 @@ void MqttCommandHandler::handle(const drivers::MqttIncomingMessage& message)
             if (_commandLatch.engineOnAllowed(activeAuthentication)) {
                 accepted = app::RemoteRelayCommandMailbox::instance().submit({
                     types::RelayCmd::ENGAGE,
-                    types::RelaySource::REMOTE_COMMAND, eventTimestamp});
+                    types::RelaySource::REMOTE_COMMAND, eventTimestamp},
+                    request.id, request.command);
             } else if (activeAuthentication) {
                 actionError = "KILL_LATCHED";
             }
@@ -339,7 +342,7 @@ void MqttCommandHandler::handle(const drivers::MqttIncomingMessage& message)
     }
 
     audit(request, accepted, actionError, eventTimestamp);
-    queueAck(request.id, request.command, accepted, actionError);
+    queueReceiptAck(request.id, request.command, accepted, actionError);
 }
 
 }  // namespace services

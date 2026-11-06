@@ -50,8 +50,8 @@ public:
     void handle(const drivers::MqttIncomingMessage& message);
 
 private:
-    bool queueAck(const char* id, const char* command, bool success,
-                  const char* error);
+    bool queueReceiptAck(const char* id, const char* command, bool accepted,
+                         const char* error);
     void audit(const MqttCommandRequest& request, bool accepted,
                const char* reason, uint64_t timestamp);
 

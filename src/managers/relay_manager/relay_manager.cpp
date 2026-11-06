@@ -5,7 +5,8 @@ namespace managers {
 
 RelayManager::RelayManager(drivers::RelayDriver& driver)
 	: _driver(driver), _state(types::RelayState::LOCKED), _pending{},
-	  _initialized(false), _pendingCommand(false)
+	  _initialized(false), _pendingCommand(false),
+	  _lastCommandSucceeded(false)
 {
 }
 
@@ -26,19 +27,27 @@ void RelayManager::update()
 
 void RelayManager::process()
 {
+	_lastCommandSucceeded = false;
 	if (!_initialized || !_pendingCommand) return;
 	switch (_pending.cmd) {
 		case types::RelayCmd::ENGAGE:
 			if (_state != types::RelayState::EMERGENCY_CUT &&
 				_driver.engage()) {
 				_state = types::RelayState::ENGAGED;
+				_lastCommandSucceeded = true;
 			}
 			break;
 		case types::RelayCmd::CUT:
-			if (_driver.cut()) _state = types::RelayState::LOCKED;
+			if (_driver.cut()) {
+				_state = types::RelayState::LOCKED;
+				_lastCommandSucceeded = true;
+			}
 			break;
 		case types::RelayCmd::EMERGENCY_CUT:
-			if (_driver.cut()) _state = types::RelayState::EMERGENCY_CUT;
+			if (_driver.cut()) {
+				_state = types::RelayState::EMERGENCY_CUT;
+				_lastCommandSucceeded = true;
+			}
 			break;
 	}
 	_pendingCommand = false;
@@ -49,6 +58,7 @@ void RelayManager::reset()
 	_driver.reset();
 	_state = types::RelayState::LOCKED;
 	_pendingCommand = false;
+	_lastCommandSucceeded = false;
 	_driver.cut();
 }
 
@@ -62,6 +72,10 @@ bool RelayManager::submit(const types::RelayCommand& command)
 
 types::RelayState RelayManager::state() const { return _state; }
 bool RelayManager::hasPendingCommand() const { return _pendingCommand; }
+bool RelayManager::lastCommandSucceeded() const
+{
+	return _lastCommandSucceeded;
+}
 
 }  // namespace managers
 }  // namespace fortico

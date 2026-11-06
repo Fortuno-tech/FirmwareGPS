@@ -45,6 +45,11 @@ public:
 	static bool commandAck(const MqttDeviceContext& context, const char* id,
 						const char* command, bool success, const char* error,
 						char* output, std::size_t outputSize);
+	static bool commandExecution(const MqttDeviceContext& context,
+							 const char* id, const char* command,
+							 bool success, const char* error,
+							 types::RelayState relayState,
+							 char* output, std::size_t outputSize);
 };
 
 }  // namespace services
