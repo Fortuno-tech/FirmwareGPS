@@ -16,10 +16,14 @@ La publication rejoue le plus ancien message et ne l'efface qu'après confirmati
 de succès par le callback. Un échec de publication ou d'effacement peut entraîner
 un doublon (sémantique au-moins-une-fois), jamais un ACK local prématuré.
 
-Il n'y a pas de limite arbitraire de rétention configurée : l'outbox utilise la
-place disponible de la carte. Toute erreur d'écriture (dont SD pleine) est
-remontée au task MQTT; il conserve le message qu'il n'a pas pu persister et ne
-dépile pas le suivant.
+La politique SD pleine est configurable dans le constructeur de
+`TelemetryOutbox` : `REJECT_NEW` (défaut) conserve les messages existants et
+remonte l'échec au task MQTT, qui garde le message RAM en attente; `OVERWRITE_OLDEST`
+supprime les plus anciens enregistrements persistés jusqu'à obtenir la place
+estimée nécessaire, puis tente la nouvelle écriture. Cette dernière option
+privilégie la fraîcheur au détriment de la livraison des anciennes mesures.
+L'estimation d'espace est fournie par le système de fichiers; si elle n'est pas
+disponible, le comportement revient à l'écriture normale sans éviction.
 
 ## Branchement à l'application
 
@@ -51,23 +55,31 @@ dédoublonnage, ainsi que l'acceptation de plusieurs topics, doivent être
 confirmées avant déploiement.
 
 La file de handoff est volatile : un arrêt brutal avant que le task MQTT ait
-persisté un message déjà admis peut perdre les messages encore dans la file et
-son emplacement de réessai. La taille bornée est de quatre messages en file plus
-un message en cours de persistance. Éliminer cette fenêtre exigerait une
+persisté les messages déjà admis peut perdre les quatre messages en file RAM et
+le message en cours de réessai/persistance (quatre queued + un in-flight
+pending). Éliminer cette fenêtre exigerait une
 persistance synchrone (incompatible avec le cycle de contrôle non bloquant) ou un
 support matériel de journal durable adapté; ne pas assimiler l'admission RAM à
 un ACK durable.
 
+Une variante « SD avant RAM » pourrait persister directement à l'admission, ce
+qui réduirait la fenêtre de perte lors d'une coupure après admission. Elle
+ajouterait toutefois les latences et blocages d'accès SD au chemin de publication
+appelé par les producteurs, potentiellement pendant le contrôle des relais.
+Elle n'est donc pas activée par défaut; ne l'envisager qu'après mesure sur le
+matériel et en déplaçant l'écriture hors du chemin critique de contrôle.
+
 ## Rétention et capacité
 
-Aucune éviction automatique ni limite arbitraire n'est appliquée : les messages
-persistés non acquittés restent sur SD jusqu'à publication réussie et l'espace
-disponible de la carte est la limite actuelle. Une carte pleine bloque le task à
-la tête de la file, puis la contre-pression remplit le handoff et les nouvelles
-admissions échouent explicitement. Les anciens messages ne sont jamais sacrifiés
-pour faire de la place. La politique de capacité/rétention et la réservation
-éventuelle d'espace pour les autres données SD restent des décisions requises
-avant le déploiement opérationnel.
+Avec la politique par défaut `REJECT_NEW`, aucune éviction automatique ni limite
+arbitraire n'est appliquée : les messages non acquittés restent sur SD jusqu'à
+publication réussie et l'espace de la carte est la limite. Une carte pleine
+bloque le task à la tête de la file, la contre-pression remplit le handoff, puis
+les admissions échouent explicitement sans sacrifier les anciens messages.
+`OVERWRITE_OLDEST` libère de l'espace en supprimant le backlog le plus ancien;
+il convient seulement si les dernières mesures priment sur l'historique.
+La réservation éventuelle d'espace SD pour les autres données reste à valider
+avant déploiement.
 
 La garantie après coupure dépend aussi du comportement réel de la carte et du
 système de fichiers : `flush` et relecture détectent les erreurs logicielles,

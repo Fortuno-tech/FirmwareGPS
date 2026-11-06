@@ -3,14 +3,14 @@
 #include "services/telemetry/telemetry_outbox.h"
 
 #if defined(ESP32_TARGET)
-#include <FS.h>
+#include <SD.h>
 
 namespace fortico {
 namespace services {
 
 class SdOutboxStorage final : public OutboxStorage {
 public:
-    explicit SdOutboxStorage(fs::FS& filesystem) : _filesystem(filesystem) {}
+    explicit SdOutboxStorage(fs::SDFS& filesystem) : _filesystem(filesystem) {}
     
 
     bool createDirectory(const char* path) override;
@@ -23,9 +23,10 @@ public:
                    size_t length) override;
     bool renameFile(const char* from, const char* to) override;
     bool removeFile(const char* path) override;
+    bool availableBytes(size_t& bytes) const override;
 
 private:
-    fs::FS& _filesystem;
+    fs::SDFS& _filesystem;
 };
 
 }  // namespace services

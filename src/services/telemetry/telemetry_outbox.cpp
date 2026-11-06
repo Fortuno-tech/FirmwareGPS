@@ -161,8 +161,10 @@ bool validRecord(const std::vector<uint8_t>& contents, OutboxMessage& message)
 
 }  // namespace
 
-TelemetryOutbox::TelemetryOutbox(OutboxStorage& storage, const char* directory)
-    : _storage(storage), _directory(directory == nullptr ? "" : directory)
+TelemetryOutbox::TelemetryOutbox(OutboxStorage& storage, const char* directory,
+                                 OutboxFullPolicy fullPolicy)
+    : _storage(storage), _directory(directory == nullptr ? "" : directory),
+      _fullPolicy(fullPolicy)
 {
 }
 
@@ -377,6 +379,28 @@ OutboxResult TelemetryOutbox::begin()
     return OutboxResult::OK;
 }
 
+bool TelemetryOutbox::makeRoom(size_t requiredBytes)
+{
+    size_t available = 0U;
+    if (!_storage.availableBytes(available)) {
+        return true;
+    }
+
+    while (available < requiredBytes) {
+        if (_fullPolicy != OutboxFullPolicy::OVERWRITE_OLDEST) {
+            return true;
+        }
+
+        OutboxMessage oldest;
+        if (peek(oldest) != OutboxResult::OK ||
+            acknowledge(oldest.sequence) != OutboxResult::OK ||
+            !_storage.availableBytes(available)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 OutboxResult TelemetryOutbox::enqueue(const char* topic, const uint8_t* payload,
                                       size_t length, uint64_t& sequence)
 {
@@ -393,6 +417,10 @@ OutboxResult TelemetryOutbox::enqueue(const char* topic, const uint8_t* payload,
     }
     if (_highWater == std::numeric_limits<uint64_t>::max()) {
         return OutboxResult::SEQUENCE_EXHAUSTED;
+    }
+    const size_t recordSize = RECORD_HEADER_SIZE + topicLength + length;
+    if (!makeRoom(std::max(recordSize, METADATA_SIZE))) {
+        return OutboxResult::IO_ERROR;
     }
 
     const uint64_t nextSequence = _highWater + 1U;

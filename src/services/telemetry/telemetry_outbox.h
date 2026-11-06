@@ -23,6 +23,11 @@ enum class OutboxResult : uint8_t {
     SEQUENCE_EXHAUSTED,
 };
 
+enum class OutboxFullPolicy : uint8_t {
+    REJECT_NEW,
+    OVERWRITE_OLDEST,
+};
+
 class OutboxStorage {
 public:
     virtual ~OutboxStorage() = default;
@@ -37,6 +42,11 @@ public:
                            size_t length) = 0;
     virtual bool renameFile(const char* from, const char* to) = 0;
     virtual bool removeFile(const char* path) = 0;
+    virtual bool availableBytes(size_t& bytes) const
+    {
+        (void)bytes;
+        return false;
+    }
 };
 
 class TelemetryOutbox {
@@ -45,7 +55,8 @@ public:
                                      const char* topic, const uint8_t* payload,
                                      size_t length);
 
-    TelemetryOutbox(OutboxStorage& storage, const char* directory);
+    TelemetryOutbox(OutboxStorage& storage, const char* directory,
+                    OutboxFullPolicy fullPolicy = OutboxFullPolicy::REJECT_NEW);
 
     OutboxResult begin();
     OutboxResult enqueue(const char* topic, const uint8_t* payload,
@@ -61,6 +72,7 @@ private:
     bool persistMetadata(uint64_t highWater, int activeSlot);
     bool recoverFiles(uint64_t& highestSequence, bool& hasRecord);
     bool readRecord(const std::string& path, OutboxMessage& message);
+    bool makeRoom(size_t requiredBytes);
     bool parseRecordName(const std::string& name, uint64_t& sequence,
                          bool& temporary) const;
     std::string recordPath(uint64_t sequence, const char* suffix) const;
@@ -70,6 +82,7 @@ private:
     std::string _directory;
     uint64_t _highWater = 0U;
     int _activeMetadataSlot = -1;
+    OutboxFullPolicy _fullPolicy;
     bool _ready = false;
 };
 

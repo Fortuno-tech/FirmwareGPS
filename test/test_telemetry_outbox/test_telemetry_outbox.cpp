@@ -101,6 +101,12 @@ public:
         return files.erase(path) != 0U;
     }
 
+    bool availableBytes(size_t& bytes) const override
+    {
+        bytes = capacity > usedBytes() ? capacity - usedBytes() : 0U;
+        return true;
+    }
+
     size_t usedBytes() const
     {
         size_t used = 0U;
@@ -343,6 +349,56 @@ void testInterruptedWriteAndFullStoragePreserveCommittedRecords()
     assert(pending.sequence == sequence);
 }
 
+void testRejectNewPolicyPreservesOldestRecordWhenStorageIsFull()
+{
+    MemoryStorage storage;
+    TelemetryOutbox outbox(storage, "/outbox");
+    assert(outbox.begin() == OutboxResult::OK);
+
+    const uint8_t payload[] = {'f', 'u', 'l', 'l'};
+    uint64_t firstSequence = 0U;
+    assert(outbox.enqueue("fleet/unit/telemetry", payload, sizeof(payload),
+                          firstSequence) == OutboxResult::OK);
+    storage.capacity = storage.usedBytes();
+
+    uint64_t rejectedSequence = 0U;
+    assert(outbox.enqueue("fleet/unit/telemetry", payload, sizeof(payload),
+                          rejectedSequence) == OutboxResult::IO_ERROR);
+    OutboxMessage pending;
+    assert(outbox.peek(pending) == OutboxResult::OK);
+    assert(pending.sequence == firstSequence);
+}
+
+void testOverwriteOldestPolicyMakesRoomForNewRecord()
+{
+    MemoryStorage storage;
+    TelemetryOutbox outbox(storage, "/outbox",
+                           fortico::services::OutboxFullPolicy::OVERWRITE_OLDEST);
+    assert(outbox.begin() == OutboxResult::OK);
+
+    const uint8_t payload[] = {'f', 'u', 'l', 'l'};
+    uint64_t firstSequence = 0U;
+    uint64_t secondSequence = 0U;
+    assert(outbox.enqueue("fleet/unit/telemetry", payload, sizeof(payload),
+                          firstSequence) == OutboxResult::OK);
+    assert(outbox.enqueue("fleet/unit/telemetry", payload, sizeof(payload),
+                          secondSequence) == OutboxResult::OK);
+    storage.capacity = storage.usedBytes();
+
+    uint64_t nextSequence = 0U;
+    assert(outbox.enqueue("fleet/unit/telemetry", payload, sizeof(payload),
+                          nextSequence) == OutboxResult::OK);
+    assert(firstSequence < secondSequence && secondSequence < nextSequence);
+    OutboxMessage pending;
+    assert(outbox.peek(pending) == OutboxResult::OK);
+    assert(pending.sequence == secondSequence);
+    assert(outbox.acknowledge(secondSequence) == OutboxResult::OK);
+    assert(outbox.peek(pending) == OutboxResult::OK);
+    assert(pending.sequence == nextSequence);
+    assert(pending.payload ==
+           std::vector<uint8_t>(payload, payload + sizeof(payload)));
+}
+
 void testInterruptedTemporaryRecordIsDiscardedWithoutSequenceReuse()
 {
     MemoryStorage storage;
@@ -381,6 +437,8 @@ void testCorruptCommittedRecordBlocksReplayAndIsNotDeleted()
                           sequence) == OutboxResult::OK);
     auto& record = storage.files["/outbox/record_1.msg"];
     record.back() ^= 0x01U;
+    OutboxMessage corrupted;
+    assert(outbox.peek(corrupted) == OutboxResult::CORRUPT);
 
     TelemetryOutbox restarted(storage, "/outbox");
     assert(restarted.begin() == OutboxResult::CORRUPT);
@@ -439,6 +497,8 @@ int main()
     RUN_TEST(testRestartPromotesCompletedInterruptedRecordWrite);
     RUN_TEST(testSuccessfulPublishWithDeleteFailureRetainsRecord);
     RUN_TEST(testInterruptedWriteAndFullStoragePreserveCommittedRecords);
+    RUN_TEST(testRejectNewPolicyPreservesOldestRecordWhenStorageIsFull);
+    RUN_TEST(testOverwriteOldestPolicyMakesRoomForNewRecord);
     RUN_TEST(testInterruptedTemporaryRecordIsDiscardedWithoutSequenceReuse);
     RUN_TEST(testCorruptCommittedRecordBlocksReplayAndIsNotDeleted);
     RUN_TEST(testWirePayloadCarriesPersistentSequenceForReceiverDeduplication);

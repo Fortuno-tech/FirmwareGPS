@@ -3,6 +3,7 @@
 #if defined(ESP32_TARGET)
 
 #include <cstring>
+#include <limits>
 
 namespace fortico {
 namespace services {
@@ -89,6 +90,20 @@ bool SdOutboxStorage::renameFile(const char* from, const char* to)
 bool SdOutboxStorage::removeFile(const char* path)
 {
     return !_filesystem.exists(path) || _filesystem.remove(path);
+}
+
+bool SdOutboxStorage::availableBytes(size_t& bytes) const
+{
+    const uint64_t total = _filesystem.totalBytes();
+    const uint64_t used = _filesystem.usedBytes();
+    if (total == 0U || used > total) {
+        return false;
+    }
+    const uint64_t available = total - used;
+    bytes = available > std::numeric_limits<size_t>::max()
+                ? std::numeric_limits<size_t>::max()
+                : static_cast<size_t>(available);
+    return true;
 }
 
 }  // namespace services
