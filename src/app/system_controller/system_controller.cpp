@@ -1,5 +1,6 @@
 #include "app/system_controller/system_controller.hpp"
 #include "app/system_controller/remote_relay_policy.hpp"
+#include "config/safety_config.h"
 
 #include <Arduino.h>
 
@@ -603,7 +604,7 @@ void SystemController::processRemoteRelayCommands()
 		}
 
 		case types::RelayCmd::EMERGENCY_CUT: {
-			_killLocked = true;
+			_killLocked = safety::KILL_LOCK_UNTIL_REBOOT;
 			_authenticationService.clearAuthentication();
 			const bool submitted = _relayManager.submit(command);
 			beginRemoteExecution(
@@ -611,7 +612,9 @@ void SystemController::processRemoteRelayCommands()
 				submitted ? nullptr : "RELAY_QUEUE_REJECTED");
 			_logger.warn(logging::TAG_SYSTEM_CONTROLLER,
 						 "commande distante KILL appliquee par la tache de controle; relais verrouille");
-			transitionTo(types::SystemState::ENGINE_KILL);
+			transitionTo(safety::KILL_LOCK_UNTIL_REBOOT
+				? types::SystemState::ENGINE_KILL
+				: types::SystemState::WAIT_BADGE);
 			_telemetryService.setActiveTracking(false);
 			break;
 		}

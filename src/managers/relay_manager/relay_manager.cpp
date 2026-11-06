@@ -1,5 +1,7 @@
 #include "managers/relay_manager/relay_manager.h"
 
+#include "config/safety_config.h"
+
 namespace fortico {
 namespace managers {
 
@@ -31,7 +33,8 @@ void RelayManager::process()
 	if (!_initialized || !_pendingCommand) return;
 	switch (_pending.cmd) {
 		case types::RelayCmd::ENGAGE:
-			if (_state != types::RelayState::EMERGENCY_CUT &&
+			if ((!safety::KILL_LOCK_UNTIL_REBOOT ||
+				 _state != types::RelayState::EMERGENCY_CUT) &&
 				_driver.engage()) {
 				_state = types::RelayState::ENGAGED;
 				_lastCommandSucceeded = true;

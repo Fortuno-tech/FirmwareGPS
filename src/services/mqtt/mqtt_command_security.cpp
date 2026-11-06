@@ -215,6 +215,7 @@ bool MqttCommandSecurity::authorize(
     }
 
     if (std::strcmp(request.command, "ENGINE_ON") == 0 &&
+        safety::ENGINE_ON_REQUIRE_LOCAL_AUTH &&
         !activeLocalAuthentication) {
         rejectionReason = "LOCAL_AUTH_REQUIRED";
         return false;

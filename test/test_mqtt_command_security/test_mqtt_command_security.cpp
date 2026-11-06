@@ -288,6 +288,9 @@ void testEngineOnRemainsBlockedAfterKillEvenIfAuthStateIsStillActive()
     latch.latchAfterKill();
     TEST_ASSERT_FALSE(latch.engineOnAllowed(true));
     TEST_ASSERT_FALSE(latch.engineOnAllowed(false));
+
+    const services::MqttCommandLatch afterRestart;
+    TEST_ASSERT_TRUE(afterRestart.engineOnAllowed(true));
 }
 
 }  // namespace

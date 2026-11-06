@@ -1,11 +1,11 @@
 #include "services/mqtt/mqtt_command_handler.h"
 
-#include <cmath>
 #include <cstdio>
 #include <cstring>
 
+#include "app/system_controller/remote_relay_policy.hpp"
 #include "app/system_controller/remote_relay_command_mailbox.hpp"
-#include "config/hardware_config.h"
+#include "config/safety_config.h"
 #include "services/mqtt/mqtt_context.h"
 #include "services/mqtt/mqtt_identity.h"
 #include "services/mqtt/mqtt_topics.h"
@@ -297,12 +297,7 @@ void MqttCommandHandler::handle(const drivers::MqttIncomingMessage& message)
         } else if (std::strcmp(request.command, "KILL") == 0) {
             const types::GpsData& gps = _gpsService.data();
             const uint32_t nowMs = utils::Timer::millis();
-            const uint32_t fixTimeMs = static_cast<uint32_t>(gps.timestamp);
-            const uint32_t fixAgeMs = nowMs - fixTimeMs;
-            const bool safeToKill = gps.fixValid && gps.hasLastFix &&
-                fixAgeMs <= hardware::GPS_LAST_FIX_MAX_AGE_MS &&
-                std::isfinite(gps.speedKmh) && gps.speedKmh >= 0.0F &&
-                gps.speedKmh <= 0.5F;
+            const bool safeToKill = app::remoteKillMayBeApplied(gps, nowMs);
             if (safeToKill) {
                 accepted = app::RemoteRelayCommandMailbox::instance().submit({
                     types::RelayCmd::EMERGENCY_CUT,

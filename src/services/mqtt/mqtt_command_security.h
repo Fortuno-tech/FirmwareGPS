@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "config/safety_config.h"
 #include "interfaces/invs_driver.h"
 #include "services/mqtt/command_mac_verifier.h"
 #include "types/mqtt_types.h"
@@ -45,10 +46,15 @@ private:
 
 class MqttCommandLatch final {
 public:
-    void latchAfterKill() { _killLatched = true; }
+    void latchAfterKill()
+    {
+        if (safety::KILL_LOCK_UNTIL_REBOOT) _killLatched = true;
+    }
     bool engineOnAllowed(bool activeLocalAuthentication) const
     {
-        return activeLocalAuthentication && !_killLatched;
+        return (!safety::ENGINE_ON_REQUIRE_LOCAL_AUTH ||
+                activeLocalAuthentication) &&
+               (!safety::KILL_LOCK_UNTIL_REBOOT || !_killLatched);
     }
 
 private:
