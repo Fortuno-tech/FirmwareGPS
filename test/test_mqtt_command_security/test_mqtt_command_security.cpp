@@ -2,6 +2,7 @@
 
 #include <cstring>
 
+#include "command_vectors.h"
 #include "mocks/mock_nvs_driver.h"
 #include "services/mqtt/mqtt_command_security.h"
 #include "services/mqtt/mqtt_command_security.cpp"
@@ -39,6 +40,52 @@ public:
     }
 };
 
+bool decodeHex(const char* hex, uint8_t* output, std::size_t outputLength)
+{
+    if (hex == nullptr || output == nullptr ||
+        std::strlen(hex) != outputLength * 2U) return false;
+    for (std::size_t index = 0U; index < outputLength; ++index) {
+        const char high = hex[index * 2U];
+        const char low = hex[index * 2U + 1U];
+        const int highValue = high >= '0' && high <= '9' ? high - '0'
+            : high >= 'a' && high <= 'f' ? high - 'a' + 10 : -1;
+        const int lowValue = low >= '0' && low <= '9' ? low - '0'
+            : low >= 'a' && low <= 'f' ? low - 'a' + 10 : -1;
+        if (highValue < 0 || lowValue < 0) return false;
+        output[index] = static_cast<uint8_t>((highValue << 4) | lowValue);
+    }
+    return true;
+}
+
+class TestVectorMacVerifier final : public services::ICommandMacVerifier {
+public:
+    bool verifyCommandMac(const uint8_t* message, std::size_t length,
+                          const uint8_t* mac,
+                          std::size_t macLength) const override
+    {
+        return matches(message, length, mac, macLength,
+                       command_vectors::validCanonical,
+                       command_vectors::validMacHex) ||
+               matches(message, length, mac, macLength,
+                       command_vectors::expiredCanonical,
+                       command_vectors::expiredMacHex);
+    }
+
+private:
+    static bool matches(const uint8_t* message, std::size_t length,
+                        const uint8_t* mac, std::size_t macLength,
+                        const char* canonical, const char* macHex)
+    {
+        uint8_t expected[32]{};
+        return message != nullptr && mac != nullptr &&
+               std::strlen(canonical) == length &&
+               std::memcmp(message, canonical, length) == 0 &&
+               macLength == sizeof(expected) &&
+               decodeHex(macHex, expected, sizeof(expected)) &&
+               std::memcmp(mac, expected, sizeof(expected)) == 0;
+    }
+};
+
 void initializeReplayState(test::MockNvsDriver& nvs)
 {
     types::MqttCommandReplayState state{};
@@ -68,6 +115,70 @@ services::MqttCommandRequest stopRequest(uint64_t sequence, const char* id)
     request.hasTimestamp = true;
     sign(request);
     return request;
+}
+
+services::MqttCommandRequest vectorRequest(const char* id, uint64_t sequence,
+                                           uint64_t timestamp,
+                                           const char* macHex)
+{
+    services::MqttCommandRequest request{};
+    std::strncpy(request.id, id, sizeof(request.id) - 1U);
+    std::strncpy(request.command, "STOP", sizeof(request.command) - 1U);
+    request.sequence = sequence;
+    request.timestamp = timestamp;
+    request.hasTimestamp = true;
+    decodeHex(macHex, request.mac, sizeof(request.mac));
+    return request;
+}
+
+void testDocumentedVectorAcceptedThenRejectedAsReplay()
+{
+    test::MockNvsDriver nvs;
+    initializeReplayState(nvs);
+    TestVectorMacVerifier verifier;
+    const services::MqttCommandRequest request = vectorRequest(
+        command_vectors::validId, command_vectors::validSequence,
+        command_vectors::validTimestamp, command_vectors::validMacHex);
+    char canonical[256]{};
+    std::size_t canonicalLength = 0U;
+    TEST_ASSERT_TRUE(services::MqttCommandSecurity::buildCanonical(
+        request, command_vectors::deviceId, canonical, sizeof(canonical),
+        canonicalLength));
+    TEST_ASSERT_EQUAL_STRING(command_vectors::validCanonical, canonical);
+    const char* reason = nullptr;
+
+    services::MqttCommandSecurity firstBoot(nvs, verifier);
+    TEST_ASSERT_TRUE(firstBoot.authorize(
+        request, command_vectors::deviceId, true, 1000U, false, reason));
+    services::MqttCommandSecurity afterRestart(nvs, verifier);
+    TEST_ASSERT_FALSE(afterRestart.authorize(
+        request, command_vectors::deviceId, true, 1000U, false, reason));
+    TEST_ASSERT_EQUAL_STRING("REPLAY", reason);
+}
+
+void testDocumentedExpiredVectorIsRejected()
+{
+    test::MockNvsDriver nvs;
+    initializeReplayState(nvs);
+    TestVectorMacVerifier verifier;
+    const services::MqttCommandRequest request = vectorRequest(
+        command_vectors::expiredId, command_vectors::expiredSequence,
+        command_vectors::expiredTimestamp, command_vectors::expiredMacHex);
+    char canonical[256]{};
+    std::size_t canonicalLength = 0U;
+    TEST_ASSERT_TRUE(services::MqttCommandSecurity::buildCanonical(
+        request, command_vectors::deviceId, canonical, sizeof(canonical),
+        canonicalLength));
+    TEST_ASSERT_EQUAL_STRING(command_vectors::expiredCanonical, canonical);
+    TEST_ASSERT_TRUE(verifier.verifyCommandMac(
+        reinterpret_cast<const uint8_t*>(canonical), canonicalLength,
+        request.mac, sizeof(request.mac)));
+    const char* reason = nullptr;
+
+    services::MqttCommandSecurity security(nvs, verifier);
+    TEST_ASSERT_FALSE(security.authorize(
+        request, command_vectors::deviceId, true, 1000U, false, reason));
+    TEST_ASSERT_EQUAL_STRING("EXPIRED", reason);
 }
 
 void testValidSignedCommandIsAccepted()
@@ -187,6 +298,8 @@ void tearDown() {}
 int main()
 {
     UNITY_BEGIN();
+    RUN_TEST(testDocumentedVectorAcceptedThenRejectedAsReplay);
+    RUN_TEST(testDocumentedExpiredVectorIsRejected);
     RUN_TEST(testValidSignedCommandIsAccepted);
     RUN_TEST(testTamperedCommandIsRejected);
     RUN_TEST(testReplayedCommandIsRejected);
