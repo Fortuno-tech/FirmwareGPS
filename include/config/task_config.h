@@ -77,7 +77,8 @@ constexpr uint32_t    SYSTEM_CONTROLLER_TASK_STACK_WORDS = 4096;
 constexpr UBaseType_t AUTH_MANAGER_TASK_PRIORITY = 4;
 constexpr uint32_t    AUTH_MANAGER_TASK_STACK_WORDS = 3072;
 
-/// TrackingManagerTask — parsing NMEA, calcul position/vitesse
+/// Réservé : aucun TrackingManagerTask n'est créé par le runtime actuel.
+/// Le GNSS SIM7600 est interrogé par ConnectivityTask puis lu par GpsService.
 constexpr UBaseType_t TRACKING_MANAGER_TASK_PRIORITY = 4;
 constexpr uint32_t    TRACKING_MANAGER_TASK_STACK_WORDS = 4096;
 
@@ -110,11 +111,11 @@ constexpr uint32_t    POWER_MANAGER_TASK_STACK_WORDS = 2048;
 // Core 0 (PRO_CPU) — tâches réseau et connectivité — Document 07 §2
 // ============================================================================
 
-/// NetworkServiceTask — FSM modem SIM7600, enregistrement réseau
+/// Connectivité réseau : tâche ConnectivityTask (propriétaire modem/GNSS).
 constexpr UBaseType_t NETWORK_SERVICE_TASK_PRIORITY = 4;
 constexpr uint32_t    NETWORK_SERVICE_TASK_STACK_WORDS = 6144;
 
-/// MQTTServiceTask — publish/subscribe, handshake TLS
+/// Publication/commande MQTT : tâche MqttPublishTask sur le cœur réseau.
 constexpr UBaseType_t MQTT_SERVICE_TASK_PRIORITY = 4;
 constexpr uint32_t    MQTT_SERVICE_TASK_STACK_WORDS = 8192;
 
@@ -124,7 +125,7 @@ constexpr uint32_t    MQTT_SERVICE_TASK_STACK_WORDS = 8192;
 constexpr UBaseType_t TELEMETRY_SERVICE_TASK_PRIORITY = 3;
 constexpr uint32_t    TELEMETRY_SERVICE_TASK_STACK_WORDS = 4096;
 
-/// OTAServiceTask — téléchargement/flash signé
+/// Réservé : aucun OTAServiceTask n'est créé par le runtime actuel.
 constexpr UBaseType_t OTA_SERVICE_TASK_PRIORITY = 3;  // [CORRIGÉ 12/07/2026, était 2 — aligné sur Document 07 v3.0
 constexpr uint32_t    OTA_SERVICE_TASK_STACK_WORDS = 8192;
 
