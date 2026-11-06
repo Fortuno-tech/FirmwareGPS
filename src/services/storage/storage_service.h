@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "config/security_config.h"
 #include "interfaces/invs_driver.h"
 #include "interfaces/isd_driver.h"
 #include "interfaces/iservice.h"
@@ -18,7 +19,9 @@ public:
 	static constexpr std::size_t MaxBadges = 2U;
 	StorageService(interfaces::INvsDriver& nvsDriver,
 				   const IBadgeHasher& badgeHasher,
-				   interfaces::ISdDriver* sdDriver = nullptr);
+				   interfaces::ISdDriver* sdDriver = nullptr,
+				   bool enableNvsMigration =
+					   security::NVS_BADGE_MIGRATION_ENABLED);
 	bool start() override;
 	void stop() override;
 	bool isRunning() const override;
@@ -35,6 +38,8 @@ private:
 	interfaces::INvsDriver& _nvsDriver;
 	const IBadgeHasher& _badgeHasher;
 	interfaces::ISdDriver* _sdDriver;
+	bool _enableNvsMigration;
+	bool _versionedWhitelist;
 	uint8_t _badges[MaxBadges][IBadgeHasher::DigestSize];
 	uint32_t _badgeCount;
 	bool _running;

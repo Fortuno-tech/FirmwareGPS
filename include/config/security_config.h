@@ -19,6 +19,10 @@
 
 #include <cstdint>
 
+#ifndef FORTICO_ENABLE_NVS_MIGRATION
+#define FORTICO_ENABLE_NVS_MIGRATION 0
+#endif
+
 #ifdef ESP32_TARGET
 #include <esp_flash_encrypt.h>
 #include <esp_secure_boot.h>
@@ -58,6 +62,12 @@ constexpr const char* NVS_KEY_APN_CREDS = "apn_creds";
 
 /// Liste blanche des UID RFID autorisés
 constexpr const char* NVS_KEY_RFID_WHITELIST = "rfid_whitelist";
+
+/// Migration source/target identifiers for the optional hashed badge-list upgrade.
+constexpr uint32_t NVS_RFID_WHITELIST_MAGIC = 0x46525431U;
+constexpr uint16_t NVS_RFID_WHITELIST_VERSION = 1U;
+constexpr bool NVS_BADGE_MIGRATION_ENABLED =
+    FORTICO_ENABLE_NVS_MIGRATION != 0;
 
 /// Clé racine provisionnée par l'outil de fabrication, jamais codée en dur.
 constexpr const char* NVS_KEY_SECURITY_ROOT = "security_root";

@@ -11,6 +11,18 @@ namespace {
 
 constexpr const char* kLegacySharedBadgeUid = "91:51:E2:06";
 
+struct VersionedBadgeWhitelist {
+	uint32_t magic;
+	uint16_t version;
+	uint16_t count;
+	uint8_t badges[StorageService::MaxBadges][IBadgeHasher::DigestSize];
+};
+
+static_assert(sizeof(VersionedBadgeWhitelist) ==
+			  sizeof(uint32_t) * 2U +
+				  StorageService::MaxBadges * IBadgeHasher::DigestSize,
+			  "versioned badge whitelist layout changed");
+
 bool validAuditText(const char* value)
 {
 	for (const char* cursor = value; *cursor != '\0'; ++cursor) {
@@ -26,8 +38,10 @@ bool validAuditText(const char* value)
 
 StorageService::StorageService(interfaces::INvsDriver& nvsDriver,
 							   const IBadgeHasher& badgeHasher,
-							   interfaces::ISdDriver* sdDriver)
+							   interfaces::ISdDriver* sdDriver,
+							   bool enableNvsMigration)
 	: _nvsDriver(nvsDriver), _badgeHasher(badgeHasher), _sdDriver(sdDriver),
+	  _enableNvsMigration(enableNvsMigration), _versionedWhitelist(false),
 	  _badges{}, _badgeCount(0U), _running(false) {}
 
 bool StorageService::start()
@@ -37,9 +51,16 @@ bool StorageService::start()
 	const bool loaded = loadBadges();
 	_nvsDriver.close();
 	_running = loaded;
-	if (_running && isBadgeAuthorized(kLegacySharedBadgeUid)) {
-		_running = removeBadge(kLegacySharedBadgeUid);
+	if (!_running) return false;
+	if (_enableNvsMigration && !_versionedWhitelist) {
+		_versionedWhitelist = true;
+		if (!saveBadges()) {
+			_running = false;
+			return false;
+		}
 	}
+	if (isBadgeAuthorized(kLegacySharedBadgeUid))
+		_running = removeBadge(kLegacySharedBadgeUid);
 	return _running;
 }
 
@@ -48,20 +69,48 @@ bool StorageService::isRunning() const { return _running; }
 
 bool StorageService::loadBadges()
 {
-	uint8_t stored[sizeof(_badges) + sizeof(uint32_t)]{};
-	if (!_nvsDriver.getBlob(security::NVS_KEY_RFID_WHITELIST, stored,
-							sizeof(stored))) {
-		_badgeCount = 0U;
+	VersionedBadgeWhitelist versioned{};
+	if (_nvsDriver.getBlob(security::NVS_KEY_RFID_WHITELIST, &versioned,
+						   sizeof(versioned))) {
+		if (versioned.magic != security::NVS_RFID_WHITELIST_MAGIC ||
+			versioned.version != security::NVS_RFID_WHITELIST_VERSION ||
+			versioned.count > MaxBadges) return false;
+		_badgeCount = versioned.count;
+		std::memcpy(_badges, versioned.badges, sizeof(_badges));
+		_versionedWhitelist = true;
 		return true;
 	}
-	std::memcpy(&_badgeCount, stored, sizeof(_badgeCount));
+
+	uint8_t legacy[sizeof(_badges) + sizeof(uint32_t)]{};
+	if (!_nvsDriver.getBlob(security::NVS_KEY_RFID_WHITELIST, legacy,
+							sizeof(legacy))) {
+		_badgeCount = 0U;
+		_versionedWhitelist = false;
+		return true;
+	}
+	std::memcpy(&_badgeCount, legacy, sizeof(_badgeCount));
 	if (_badgeCount > MaxBadges) return false;
-	std::memcpy(_badges, stored + sizeof(_badgeCount), sizeof(_badges));
+	std::memcpy(_badges, legacy + sizeof(_badgeCount), sizeof(_badges));
+	_versionedWhitelist = false;
 	return true;
 }
 
 bool StorageService::saveBadges() const
 {
+	if (_versionedWhitelist || _enableNvsMigration) {
+		VersionedBadgeWhitelist versioned{};
+		versioned.magic = security::NVS_RFID_WHITELIST_MAGIC;
+		versioned.version = security::NVS_RFID_WHITELIST_VERSION;
+		versioned.count = static_cast<uint16_t>(_badgeCount);
+		std::memcpy(versioned.badges, _badges, sizeof(_badges));
+		if (!_nvsDriver.open(security::NVS_NAMESPACE, false)) return false;
+		const bool saved = _nvsDriver.putBlob(
+			security::NVS_KEY_RFID_WHITELIST, &versioned,
+			sizeof(versioned));
+		_nvsDriver.close();
+		return saved;
+	}
+
 	uint8_t stored[sizeof(_badges) + sizeof(uint32_t)]{};
 	std::memcpy(stored, &_badgeCount, sizeof(_badgeCount));
 	std::memcpy(stored + sizeof(_badgeCount), _badges, sizeof(_badges));
