@@ -53,6 +53,11 @@ SystemController::SystemController(
 	  _lastPublishedRelayState(types::RelayState::LOCKED), _relayStateKnown(false),
 	  _systemState(types::SystemState::BOOT), _lastGpsMqttPublishMs(0U),
 	  _killLocked(false), _lastMqttConnected(false)
+#if defined(FORTICO_ENABLE_CONTROL_TIMING) && FORTICO_ENABLE_CONTROL_TIMING
+	  , _controlTiming(), _hasPendingRemoteActionTiming(false),
+	  _pendingRemoteReceiptMs(0U), _pendingRemoteAction{},
+	  _lastControlTimingLogMs(0U)
+#endif
 {
 }
 
@@ -390,7 +395,21 @@ void SystemController::update()
 	logBatteryStatus();
 
 	_relayManager.update();
+	const uint32_t relayProcessCountBefore = _relayManager.processedCommandCount();
 	_relayManager.process();
+#if defined(FORTICO_ENABLE_CONTROL_TIMING) && FORTICO_ENABLE_CONTROL_TIMING
+	if (_relayManager.processedCommandCount() != relayProcessCountBefore) {
+		const types::RelayCommand& processed = _relayManager.lastProcessedCommand();
+		if (_hasPendingRemoteActionTiming &&
+			processed.source == types::RelaySource::REMOTE_COMMAND &&
+			processed.cmd == _pendingRemoteAction.cmd &&
+			processed.timestamp == _pendingRemoteAction.timestamp) {
+			_controlTiming.recordCommandRelayAction(
+				_pendingRemoteReceiptMs, utils::Timer::millis());
+		}
+		_hasPendingRemoteActionTiming = false;
+	}
+#endif
 	(void)_remoteCommandExecution.complete(
 		_relayManager.lastCommandSucceeded(), _relayManager.state());
 	publishRemoteExecutionResult();
@@ -414,6 +433,23 @@ void SystemController::update()
 	Serial.printf("[PERF][SYSTEM] update END duration=%llu\n",
 				  static_cast<unsigned long long>(utils::Timer::millis() - updateStartMs));
 }
+
+#if defined(FORTICO_ENABLE_CONTROL_TIMING) && FORTICO_ENABLE_CONTROL_TIMING
+void SystemController::recordControlCycle(uint32_t startedAtMs,
+										  uint32_t completedAtMs)
+{
+	_controlTiming.recordControlCycle(startedAtMs, completedAtMs);
+	const uint32_t controlCycleEndMs = completedAtMs;
+	if (controlCycleEndMs - _lastControlTimingLogMs >= 60000U) {
+		_lastControlTimingLogMs = controlCycleEndMs;
+		_logger.info(logging::TAG_SYSTEM_CONTROLLER,
+					 "[CONTROL_TIMING] max_cycle_ms=%lu max_command_to_relay_ms=%lu measured_actions=%lu",
+					 static_cast<unsigned long>(_controlTiming.maxControlCycleMs()),
+					 static_cast<unsigned long>(_controlTiming.maxCommandRelayLatencyMs()),
+					 static_cast<unsigned long>(_controlTiming.commandRelayActionCount()));
+	}
+}
+#endif
 
 void SystemController::processAlerts()
 {
@@ -563,7 +599,8 @@ bool SystemController::submitRemoteRelayCommand(types::RelayCmd command,
 		return false;
 	}
 	return _remoteRelayCommandMailbox.submit(
-		{command, types::RelaySource::REMOTE_COMMAND, timestamp});
+		{command, types::RelaySource::REMOTE_COMMAND, timestamp},
+		utils::Timer::millis());
 }
 
 void SystemController::processRemoteRelayCommands()
@@ -577,9 +614,13 @@ void SystemController::processRemoteRelayCommands()
 			if (stateAfterRemoteCut(_systemState, _killLocked) ==
 				types::SystemState::ENGINE_KILL) {
 				_killLocked = true;
-				const bool submitted = _relayManager.submit({
+				const types::RelayCommand action{
 						types::RelayCmd::EMERGENCY_CUT,
-						types::RelaySource::REMOTE_COMMAND, command.timestamp});
+						types::RelaySource::REMOTE_COMMAND, command.timestamp};
+				const bool submitted = _relayManager.submit(action);
+#if defined(FORTICO_ENABLE_CONTROL_TIMING) && FORTICO_ENABLE_CONTROL_TIMING
+				trackRemoteRelaySubmission(remoteCommand, action, submitted);
+#endif
 				beginRemoteExecution(
 					remoteCommand, submitted,
 					types::RelayState::EMERGENCY_CUT,
@@ -590,6 +631,9 @@ void SystemController::processRemoteRelayCommands()
 			_logger.info(logging::TAG_SYSTEM_CONTROLLER,
 						 "commande distante STOP traitee par la tache de controle");
 			const bool submitted = _relayManager.submit(command);
+#if defined(FORTICO_ENABLE_CONTROL_TIMING) && FORTICO_ENABLE_CONTROL_TIMING
+			trackRemoteRelaySubmission(remoteCommand, command, submitted);
+#endif
 			beginRemoteExecution(remoteCommand, submitted,
 								 types::RelayState::LOCKED,
 								 submitted ? nullptr : "RELAY_QUEUE_REJECTED");
@@ -607,6 +651,9 @@ void SystemController::processRemoteRelayCommands()
 			_killLocked = safety::KILL_LOCK_UNTIL_REBOOT;
 			_authenticationService.clearAuthentication();
 			const bool submitted = _relayManager.submit(command);
+#if defined(FORTICO_ENABLE_CONTROL_TIMING) && FORTICO_ENABLE_CONTROL_TIMING
+			trackRemoteRelaySubmission(remoteCommand, command, submitted);
+#endif
 			beginRemoteExecution(
 				remoteCommand, submitted, types::RelayState::EMERGENCY_CUT,
 				submitted ? nullptr : "RELAY_QUEUE_REJECTED");
@@ -633,6 +680,9 @@ void SystemController::processRemoteRelayCommands()
 				break;
 			}
 			const bool submitted = _relayManager.submit(command);
+#if defined(FORTICO_ENABLE_CONTROL_TIMING) && FORTICO_ENABLE_CONTROL_TIMING
+			trackRemoteRelaySubmission(remoteCommand, command, submitted);
+#endif
 			beginRemoteExecution(
 				remoteCommand, submitted, types::RelayState::ENGAGED,
 				submitted ? nullptr : "RELAY_QUEUE_REJECTED");
@@ -645,6 +695,18 @@ void SystemController::processRemoteRelayCommands()
 		}
 	}
 }
+
+#if defined(FORTICO_ENABLE_CONTROL_TIMING) && FORTICO_ENABLE_CONTROL_TIMING
+void SystemController::trackRemoteRelaySubmission(
+	const RemoteRelayCommand& remoteCommand, const types::RelayCommand& action,
+	bool submitted)
+{
+	if (!submitted) return;
+	_hasPendingRemoteActionTiming = true;
+	_pendingRemoteReceiptMs = remoteCommand.receivedAtMonotonicMs;
+	_pendingRemoteAction = action;
+}
+#endif
 
 void SystemController::beginRemoteExecution(
 	const RemoteRelayCommand& command, bool accepted,

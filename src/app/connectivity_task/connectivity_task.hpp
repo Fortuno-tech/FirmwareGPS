@@ -12,6 +12,7 @@
 
 #include "app/connectivity_task/connectivity_request_mailbox.h"
 #include "core/logger/logger.h"
+#include "core/watchdog/watchdog.h"
 #include "drivers/rtc/rtc_driver.h"
 #include "drivers/sim7600/sim7600_driver.h"
 #include "drivers/sim7600/sim7600_power_driver.h"
@@ -36,6 +37,7 @@ public:
 
 	bool start(bool enableNetwork = true);
 	void stop();
+	void setWatchdog(core::Watchdog* watchdog);
 	void requestReconnect();
 	bool networkConnected() const;
 	bool mqttConnected() const;
@@ -55,6 +57,7 @@ private:
 
 	struct ProvisioningRequest {
 		ProvisioningOperation operation;
+		uint32_t requestId;
 		std::size_t expectedSize;
 		char certificateName[kCertificateNameSize];
 		const char* base64Data;
@@ -63,10 +66,10 @@ private:
 	static constexpr EventBits_t kNetworkConnected = 1U << 0U;
 	static constexpr EventBits_t kMqttConnected = 1U << 1U;
 	static constexpr uint32_t kWorkerWakeNotification = 1U << 0U;
-	static constexpr uint32_t kWorkerPollIntervalMs = 250U;
 
 	static void taskEntry(void* context);
 	void run();
+	void feedWatchdog();
 	bool submitProvisioningRequest(const ProvisioningRequest& request);
 	bool processProvisioningRequest();
 	bool attemptNetworkConnection();
@@ -84,14 +87,18 @@ private:
 	core::Logger& _logger;
 	EventGroupHandle_t _statusEvents;
 	SemaphoreHandle_t _stoppedSemaphore;
+	SemaphoreHandle_t _taskStartGate;
 	TaskHandle_t _taskHandle;
+	core::Watchdog* _watchdog;
 	std::atomic<bool> _stopRequested;
 	std::atomic<bool> _networkEnabled;
 	ConnectivityRequestMailbox _requests;
 	QueueHandle_t _provisioningQueue;
 	SemaphoreHandle_t _provisioningMutex;
 	SemaphoreHandle_t _provisioningComplete;
-	bool _provisioningResult;
+	std::atomic<uint32_t> _nextProvisioningId;
+	std::atomic<uint32_t> _provisioningCompletedId;
+	std::atomic<bool> _provisioningResult;
 };
 
 }  // namespace app

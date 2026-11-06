@@ -12,6 +12,7 @@
 
 #ifdef ESP32_TARGET
 #include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <freertos/task.h>
 #endif
 
@@ -63,6 +64,7 @@ private:
     uint64_t _lastGeneralPublishAttemptMs;
 #ifdef ESP32_TARGET
     TaskHandle_t _taskHandle;
+    SemaphoreHandle_t _startGate;
 #endif
 };
 

@@ -32,7 +32,9 @@ bool I2cHal::lock(uint32_t timeoutMs) {
     if (mutex_ == nullptr) {
         return false;
     }
-    const TickType_t ticks = (timeoutMs == portMAX_DELAY) ? portMAX_DELAY : pdMS_TO_TICKS(timeoutMs);
+    const uint32_t boundedTimeoutMs = timeoutMs == portMAX_DELAY
+        ? hardware::I2C_MUTEX_TIMEOUT_MS : timeoutMs;
+    const TickType_t ticks = pdMS_TO_TICKS(boundedTimeoutMs);
     return xSemaphoreTakeRecursive(static_cast<SemaphoreHandle_t>(mutex_), ticks) == pdTRUE;
 #else
     (void)timeoutMs;

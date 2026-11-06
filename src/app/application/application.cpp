@@ -2,6 +2,8 @@
 
 #include <Arduino.h>
 
+#include "utils/timer_utils.h"
+
 namespace fortico {
 namespace app {
 
@@ -86,6 +88,11 @@ void Application::stop()
     _running = false;
 }
 
+void Application::setWatchdog(core::Watchdog* watchdog)
+{
+    _taskManager.setWatchdog(watchdog);
+}
+
 void Application::updateTask(void* context)
 {
     static_cast<Application*>(context)->scheduledUpdate();
@@ -93,10 +100,17 @@ void Application::updateTask(void* context)
 
 void Application::scheduledUpdate()
 {
+#if defined(FORTICO_ENABLE_CONTROL_TIMING) && FORTICO_ENABLE_CONTROL_TIMING
+    const uint32_t controlCycleStartMs = utils::Timer::millis();
+#endif
     _systemController.update();
 
     _stateMachine.update(_systemController.powerState(),
                          _systemController.hasFault());
+#if defined(FORTICO_ENABLE_CONTROL_TIMING) && FORTICO_ENABLE_CONTROL_TIMING
+    _systemController.recordControlCycle(
+        controlCycleStartMs, utils::Timer::millis());
+#endif
 }
 
 types::SystemState Application::state() const { return _stateMachine.state(); }

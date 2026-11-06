@@ -5,6 +5,7 @@
 #include "config/hardware_config.h"
 #include "config/network_config.h"
 #include "config/task_config.h"
+#include "app/connectivity_task/network_wait_policy.hpp"
 #include "services/security/provisioning_service.h"
 #include "utils/timer_utils.h"
 
@@ -26,11 +27,14 @@ ConnectivityTask::ConnectivityTask(
 	  _securityService(securityService), _rtcDriver(rtcDriver),
 	  _mqttClient(mqttClient), _logger(logger),
 	  _statusEvents(xEventGroupCreate()),
-	  _stoppedSemaphore(xSemaphoreCreateBinary()), _taskHandle(nullptr),
+	  _stoppedSemaphore(xSemaphoreCreateBinary()),
+	  _taskStartGate(xSemaphoreCreateBinary()), _taskHandle(nullptr),
+	  _watchdog(nullptr),
 	  _stopRequested(false), _networkEnabled(false), _requests(),
 	  _provisioningQueue(xQueueCreate(1U, sizeof(ProvisioningRequest))),
 	  _provisioningMutex(xSemaphoreCreateMutex()),
 	  _provisioningComplete(xSemaphoreCreateBinary()),
+	  _nextProvisioningId(0U), _provisioningCompletedId(0U),
 	  _provisioningResult(false)
 {
 }
@@ -45,16 +49,29 @@ bool ConnectivityTask::start(bool enableNetwork)
 		return true;
 	}
 	if (_statusEvents == nullptr || _stoppedSemaphore == nullptr ||
+		_taskStartGate == nullptr ||
 		_provisioningQueue == nullptr || _provisioningMutex == nullptr ||
 		_provisioningComplete == nullptr) return false;
 	_stopRequested.store(false, std::memory_order_release);
 	_networkEnabled.store(enableNetwork, std::memory_order_release);
+	(void)xSemaphoreTake(_taskStartGate, 0U);
 	(void)xSemaphoreTake(_stoppedSemaphore, 0U);
-	return xTaskCreatePinnedToCore(
-			   &ConnectivityTask::taskEntry, "ConnectivityTask",
-			   tasks::NETWORK_SERVICE_TASK_STACK_WORDS, this,
-			   tasks::NETWORK_SERVICE_TASK_PRIORITY, &_taskHandle,
-			   tasks::CORE_NETWORK) == pdTRUE;
+	if (xTaskCreatePinnedToCore(
+			&ConnectivityTask::taskEntry, "ConnectivityTask",
+			tasks::NETWORK_SERVICE_TASK_STACK_WORDS, this,
+			tasks::NETWORK_SERVICE_TASK_PRIORITY, &_taskHandle,
+			tasks::CORE_NETWORK) != pdTRUE) {
+		_taskHandle = nullptr;
+		return false;
+	}
+	if (_watchdog != nullptr &&
+		!_watchdog->registerTask(_taskHandle, "ConnectivityTask")) {
+		vTaskDelete(_taskHandle);
+		_taskHandle = nullptr;
+		return false;
+	}
+	(void)xSemaphoreGive(_taskStartGate);
+	return true;
 }
 
 void ConnectivityTask::stop()
@@ -62,8 +79,16 @@ void ConnectivityTask::stop()
 	if (_taskHandle == nullptr) return;
 	_stopRequested.store(true, std::memory_order_release);
 	(void)xTaskNotify(_taskHandle, kWorkerWakeNotification, eSetBits);
-	(void)xSemaphoreTake(_stoppedSemaphore, portMAX_DELAY);
-	_taskHandle = nullptr;
+	if (xSemaphoreTake(_stoppedSemaphore,
+			pdMS_TO_TICKS(network_wait::kWorkerStopTimeoutMs)) == pdTRUE) {
+		_taskHandle = nullptr;
+	}
+}
+
+void ConnectivityTask::setWatchdog(core::Watchdog* watchdog)
+{
+	_watchdog = watchdog;
+	_sim7600Driver.setWatchdog(watchdog);
 }
 
 void ConnectivityTask::requestReconnect()
@@ -125,18 +150,43 @@ bool ConnectivityTask::submitProvisioningRequest(
 {
 	if (_taskHandle == nullptr || _provisioningQueue == nullptr ||
 		_provisioningMutex == nullptr || _provisioningComplete == nullptr ||
-		xSemaphoreTake(_provisioningMutex, portMAX_DELAY) != pdTRUE) {
+		xSemaphoreTake(_provisioningMutex,
+			pdMS_TO_TICKS(network_wait::kProvisioningLockTimeoutMs)) != pdTRUE) {
 		return false;
 	}
+	ProvisioningRequest queuedRequest = request;
+	queuedRequest.requestId = _nextProvisioningId.fetch_add(
+		1U, std::memory_order_relaxed) + 1U;
+	if (queuedRequest.requestId == 0U) {
+		queuedRequest.requestId = _nextProvisioningId.fetch_add(
+			1U, std::memory_order_relaxed) + 1U;
+	}
 	(void)xSemaphoreTake(_provisioningComplete, 0U);
-	if (xQueueSend(_provisioningQueue, &request, 0U) != pdTRUE) {
+	if (xQueueSend(_provisioningQueue, &queuedRequest, 0U) != pdTRUE) {
 		(void)xSemaphoreGive(_provisioningMutex);
 		return false;
 	}
 	(void)xTaskNotify(_taskHandle, kWorkerWakeNotification, eSetBits);
-	const bool completed =
-		xSemaphoreTake(_provisioningComplete, portMAX_DELAY) == pdTRUE;
-	const bool result = completed && _provisioningResult;
+	const uint32_t startedAtMs = utils::Timer::millis();
+	bool completed = false;
+	while (!network_wait::expired(
+		startedAtMs, utils::Timer::millis(),
+		network_wait::kProvisioningCompletionTimeoutMs)) {
+		const uint32_t remainingMs = network_wait::remainingMs(
+			startedAtMs, utils::Timer::millis(),
+			network_wait::kProvisioningCompletionTimeoutMs);
+		if (xSemaphoreTake(_provisioningComplete,
+				pdMS_TO_TICKS(remainingMs)) != pdTRUE) {
+			break;
+		}
+		if (_provisioningCompletedId.load(std::memory_order_acquire) ==
+			queuedRequest.requestId) {
+			completed = true;
+			break;
+		}
+	}
+	const bool result = completed &&
+		_provisioningResult.load(std::memory_order_acquire);
 	(void)xSemaphoreGive(_provisioningMutex);
 	return result;
 }
@@ -148,9 +198,24 @@ void ConnectivityTask::taskEntry(void* context)
 
 void ConnectivityTask::run()
 {
+	if (_taskStartGate == nullptr ||
+		xSemaphoreTake(_taskStartGate,
+			pdMS_TO_TICKS(network_wait::kWorkerStartupTimeoutMs)) != pdTRUE) {
+		if (_watchdog != nullptr) {
+			(void)_watchdog->unregisterTask(xTaskGetCurrentTaskHandle());
+		}
+		_taskHandle = nullptr;
+		(void)xSemaphoreGive(_stoppedSemaphore);
+		vTaskDelete(nullptr);
+		return;
+	}
+
+	feedWatchdog();
 	if (_sim7600PowerDriver.init() == constants::ErrorCode::OK &&
 		_sim7600PowerDriver.start()) {
+		feedWatchdog();
 		(void)_sim7600PowerDriver.powerOn();
+		feedWatchdog();
 	}
 
 	const uint32_t retryIntervalMs = hardware::OFFLINE_RETRY_INTERVAL_MS;
@@ -209,10 +274,12 @@ void ConnectivityTask::run()
 			(void)processProvisioningRequest();
 			if (!_networkEnabled.load(std::memory_order_acquire)) {
 				publishStatus(false, false);
+				feedWatchdog();
 				uint32_t notification = 0U;
 				(void)xTaskNotifyWait(0U, kWorkerWakeNotification,
 									  &notification,
-									  pdMS_TO_TICKS(kWorkerPollIntervalMs));
+									  pdMS_TO_TICKS(
+										  network_wait::kWorkerPollIntervalMs));
 				continue;
 			}
 			if (!diagnosticsAttempted) {
@@ -292,9 +359,11 @@ void ConnectivityTask::run()
 			publishStatus(false, false);
 		}
 
+		feedWatchdog();
 		uint32_t notification = 0U;
 		(void)xTaskNotifyWait(0U, kWorkerWakeNotification, &notification,
-							  pdMS_TO_TICKS(kWorkerPollIntervalMs));
+							  pdMS_TO_TICKS(
+								  network_wait::kWorkerPollIntervalMs));
 	}
 
 	_mqttClient.disconnect();
@@ -302,9 +371,19 @@ void ConnectivityTask::run()
 	_sim7600Service.stop();
 	_sim7600PowerDriver.stop();
 	publishStatus(false, false);
-	(void)xSemaphoreGive(_stoppedSemaphore);
+	if (_watchdog != nullptr) {
+		(void)_watchdog->unregisterTask(xTaskGetCurrentTaskHandle());
+	}
 	_taskHandle = nullptr;
+	(void)xSemaphoreGive(_stoppedSemaphore);
 	vTaskDelete(nullptr);
+}
+
+void ConnectivityTask::feedWatchdog()
+{
+	if (_watchdog != nullptr) {
+		_watchdog->feed(xTaskGetCurrentTaskHandle());
+	}
 }
 
 bool ConnectivityTask::processProvisioningRequest()
@@ -335,7 +414,9 @@ bool ConnectivityTask::processProvisioningRequest()
 			}
 		}
 	}
-	_provisioningResult = result;
+	_provisioningResult.store(result, std::memory_order_release);
+	_provisioningCompletedId.store(request.requestId,
+								   std::memory_order_release);
 	if (_provisioningComplete != nullptr) {
 		(void)xSemaphoreGive(_provisioningComplete);
 	}

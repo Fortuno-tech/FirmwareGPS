@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include "drivers/relay/relay_driver.h"
 #include "interfaces/imanager.h"
 #include "types/relay_types.h"
@@ -20,6 +22,8 @@ public:
 	types::RelayState state() const;
 	bool hasPendingCommand() const;
 	bool lastCommandSucceeded() const;
+	uint32_t processedCommandCount() const;
+	const types::RelayCommand& lastProcessedCommand() const;
 
 private:
 	drivers::RelayDriver& _driver;
@@ -28,6 +32,8 @@ private:
 	bool _initialized;
 	bool _pendingCommand;
 	bool _lastCommandSucceeded;
+	uint32_t _processedCommandCount;
+	types::RelayCommand _lastProcessedCommand;
 };
 
 }  // namespace managers

@@ -63,6 +63,20 @@ void testCorrelatedCommandKeepsIdAndCanBeConsumedOnlyOnce()
 	TEST_ASSERT_FALSE(mailbox.receive(received));
 }
 
+void testCommandReceiptMonotonicTimeIsPreserved()
+{
+	RemoteRelayCommandMailbox mailbox;
+	const RelayCommand relayCommand{
+		RelayCmd::ENGAGE, RelaySource::REMOTE_COMMAND, 15U};
+	TEST_ASSERT_TRUE(mailbox.submit(relayCommand, "cmd-15", "ENGINE_ON",
+									0xFFFFFFF0U));
+
+	RemoteRelayCommand received{};
+	TEST_ASSERT_TRUE(mailbox.receive(received));
+	TEST_ASSERT_EQUAL_UINT32(0xFFFFFFF0U,
+							 received.receivedAtMonotonicMs);
+}
+
 }  // namespace
 
 void setUp() {}
@@ -74,5 +88,6 @@ int main()
 	RUN_TEST(testRemoteCommandsRemainFifoAndBounded);
 	RUN_TEST(testResetDiscardsQueuedCommands);
 	RUN_TEST(testCorrelatedCommandKeepsIdAndCanBeConsumedOnlyOnce);
+	RUN_TEST(testCommandReceiptMonotonicTimeIsPreserved);
 	return UNITY_END();
 }

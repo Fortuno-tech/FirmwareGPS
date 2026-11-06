@@ -8,6 +8,11 @@
 
 namespace fortico {
 namespace core {
+namespace {
+
+constexpr TickType_t kSubscriptionLockTimeoutTicks = pdMS_TO_TICKS(100U);
+
+}
 
 EventBus::EventBus()
     : _inputQueue(nullptr),
@@ -100,7 +105,9 @@ void EventBus::subscribe(constants::EventID id, interfaces::IEventListener* list
         return;
     }
 
-    xSemaphoreTake(_subMutex, portMAX_DELAY);
+    if (xSemaphoreTake(_subMutex, kSubscriptionLockTimeoutTicks) != pdTRUE) {
+        return;
+    }
 
     TopicSubscription& sub = _subscriptions[idx];
     for (uint8_t i = 0; i < sub.listenerCount; ++i) {
@@ -132,7 +139,9 @@ void EventBus::unsubscribe(constants::EventID id, interfaces::IEventListener* li
         return;
     }
 
-    xSemaphoreTake(_subMutex, portMAX_DELAY);
+    if (xSemaphoreTake(_subMutex, kSubscriptionLockTimeoutTicks) != pdTRUE) {
+        return;
+    }
 
     TopicSubscription& sub = _subscriptions[idx];
     for (uint8_t i = 0; i < sub.listenerCount; ++i) {
@@ -189,7 +198,9 @@ void EventBus::dispatch(const types::Event& event) {
     if (_subMutex == nullptr) {
         return;
     }
-    xSemaphoreTake(_subMutex, portMAX_DELAY);
+    if (xSemaphoreTake(_subMutex, kSubscriptionLockTimeoutTicks) != pdTRUE) {
+        return;
+    }
     const TopicSubscription& sub = _subscriptions[idx];
     listenerCount = sub.listenerCount;
     for (uint8_t i = 0; i < listenerCount; ++i) {

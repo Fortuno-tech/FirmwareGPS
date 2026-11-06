@@ -48,12 +48,21 @@ bool RfidDriver::waitForPn532Availability(uint32_t timeoutMs, uint32_t pollInter
     const uint32_t startTimeMs = millis();
     TwoWire& wire = _i2cHal.native();
 
+    if (!_i2cHal.lock(hardware::I2C_MUTEX_TIMEOUT_MS)) {
+        return false;
+    }
     wire.setClock(hardware::I2C_FREQUENCY_HZ);
     wire.setTimeOut(PN532_I2C_TRANSACTION_TIMEOUT_MS);
+    _i2cHal.unlock();
 
     while ((millis() - startTimeMs) < timeoutMs) {
+        if (!_i2cHal.lock(hardware::I2C_MUTEX_TIMEOUT_MS)) {
+            return false;
+        }
         wire.beginTransmission(RFID_PN532_I2C_ADDRESS);
-        if (wire.endTransmission() == 0U) {
+        const bool available = wire.endTransmission() == 0U;
+        _i2cHal.unlock();
+        if (available) {
             return true;
         }
         vTaskDelay(pdMS_TO_TICKS(pollIntervalMs));

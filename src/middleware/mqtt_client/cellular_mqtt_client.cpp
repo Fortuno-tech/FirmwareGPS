@@ -4,6 +4,7 @@
 #include <cstring>
 
 #include "config/sim7600_mqtt_config.h"
+#include "config/hardware_config.h"
 #include "config/logging_config.h"
 #include "services/mqtt/mqtt_identity.h"
 #include "services/mqtt/mqtt_topics.h"
@@ -22,7 +23,8 @@ bool isAtSafeString(const char* value)
 class ModemTransactionGuard final {
 public:
     explicit ModemTransactionGuard(fortico::drivers::Sim7600Driver& modem,
-                                   uint32_t timeoutMs = portMAX_DELAY)
+                                   uint32_t timeoutMs =
+                                       fortico::hardware::SIM7600_UART_MUTEX_TIMEOUT_MS)
         : _modem(modem), _locked(_modem.lockTransaction(timeoutMs)) {}
 
     ~ModemTransactionGuard() { if (_locked) _modem.unlockTransaction(); }

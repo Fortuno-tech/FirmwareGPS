@@ -11,6 +11,10 @@ bool TaskManager::addPeriodic(uint32_t periodMs, Callback callback, void* contex
 bool TaskManager::start() { return _scheduler.start(); }
 void TaskManager::stop() { _scheduler.stop(); }
 bool TaskManager::isRunning() const { return _scheduler.isRunning(); }
+void TaskManager::setWatchdog(core::Watchdog* watchdog)
+{
+	_scheduler.setWatchdog(watchdog);
+}
 
 }  // namespace app
 }  // namespace fortico

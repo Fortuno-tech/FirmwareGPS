@@ -15,6 +15,9 @@
 #endif
 
 namespace fortico {
+namespace core {
+class Watchdog;
+}
 namespace drivers {
 
 struct MqttIncomingMessage {
@@ -23,6 +26,7 @@ struct MqttIncomingMessage {
 	char payload[1024];
 	std::size_t topicLength;
 	std::size_t payloadLength;
+	uint32_t receivedAtMonotonicMs;
 };
 
 class Sim7600Driver : public interfaces::IDriver {
@@ -80,6 +84,7 @@ public:
 							 std::size_t certLen);
 	bool lockTransaction(uint32_t timeoutMs);
 	void unlockTransaction();
+	void setWatchdog(core::Watchdog* watchdog);
 	CommandFailure lastCommandFailure() const;
 
 private:
@@ -88,6 +93,7 @@ private:
 						  uint32_t timeoutMs);
 	bool sendDiagnosticCommand(const char* command, char* response,
 						   std::size_t responseSize, uint32_t timeoutMs);
+	void feedWatchdogIfDue(uint32_t& lastFeedMs);
 	void drainInput();
 	void consumeIncomingByte(uint8_t byte);
 	void resetIncomingParser();
@@ -111,6 +117,7 @@ private:
 	std::size_t _incomingLineLength;
 	bool _incomingMessageReady;
 	bool _incomingConnectionLost;
+	core::Watchdog* _watchdog;
 #ifdef ESP32_TARGET
 	SemaphoreHandle_t _transactionMutex;
 #endif

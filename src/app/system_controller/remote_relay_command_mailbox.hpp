@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 
 #include "types/relay_types.h"
@@ -17,6 +18,7 @@ struct RemoteRelayCommand {
 	types::RelayCommand relayCommand;
 	char commandId[64];
 	char commandName[16];
+	uint32_t receivedAtMonotonicMs;
 	bool hasCorrelation;
 };
 
@@ -48,16 +50,18 @@ public:
 #endif
 	}
 
-	bool submit(const types::RelayCommand& command)
+	bool submit(const types::RelayCommand& command,
+				uint32_t receivedAtMonotonicMs = 0U)
 	{
-		return submit(command, nullptr, nullptr);
+		return submit(command, nullptr, nullptr, receivedAtMonotonicMs);
 	}
 
 	bool submit(const types::RelayCommand& command, const char* commandId,
-				const char* commandName)
+				const char* commandName, uint32_t receivedAtMonotonicMs = 0U)
 	{
 		RemoteRelayCommand remote{};
 		remote.relayCommand = command;
+		remote.receivedAtMonotonicMs = receivedAtMonotonicMs;
 		if ((commandId == nullptr) != (commandName == nullptr)) return false;
 		if (commandId != nullptr) {
 			const std::size_t idLength = std::strlen(commandId);

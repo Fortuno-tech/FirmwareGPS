@@ -8,7 +8,8 @@ namespace managers {
 RelayManager::RelayManager(drivers::RelayDriver& driver)
 	: _driver(driver), _state(types::RelayState::LOCKED), _pending{},
 	  _initialized(false), _pendingCommand(false),
-	  _lastCommandSucceeded(false)
+	  _lastCommandSucceeded(false), _processedCommandCount(0U),
+	  _lastProcessedCommand{}
 {
 }
 
@@ -31,6 +32,8 @@ void RelayManager::process()
 {
 	_lastCommandSucceeded = false;
 	if (!_initialized || !_pendingCommand) return;
+	_lastProcessedCommand = _pending;
+	++_processedCommandCount;
 	switch (_pending.cmd) {
 		case types::RelayCmd::ENGAGE:
 			if ((!safety::KILL_LOCK_UNTIL_REBOOT ||
@@ -78,6 +81,14 @@ bool RelayManager::hasPendingCommand() const { return _pendingCommand; }
 bool RelayManager::lastCommandSucceeded() const
 {
 	return _lastCommandSucceeded;
+}
+uint32_t RelayManager::processedCommandCount() const
+{
+	return _processedCommandCount;
+}
+const types::RelayCommand& RelayManager::lastProcessedCommand() const
+{
+	return _lastProcessedCommand;
 }
 
 }  // namespace managers

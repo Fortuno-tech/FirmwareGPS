@@ -53,6 +53,7 @@ public:
 	bool start();
 	void update();
 	void stop();
+	void setWatchdog(core::Watchdog* watchdog);
 	types::SystemState state() const;
 
 private:

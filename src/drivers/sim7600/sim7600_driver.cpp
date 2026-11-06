@@ -9,6 +9,7 @@
 
 #include "config/hardware_config.h"
 #include "config/pin_config.h"
+#include "core/watchdog/watchdog.h"
 #include "utils/timer_utils.h"
 
 namespace fortico {
@@ -16,7 +17,8 @@ namespace drivers {
 
 Sim7600Driver::Sim7600Driver(hal::UartHal& uartHal, hal::DelayHal& delayHal)
 	: _uartHal(uartHal), _delayHal(delayHal), _initialized(false), _healthy(false), _active(false),
-	  _dataConnected(false), _lastCommandFailure(CommandFailure::NONE)
+	  _dataConnected(false), _lastCommandFailure(CommandFailure::NONE),
+	  _watchdog(nullptr)
 #ifdef ESP32_TARGET
 	  , _transactionMutex(xSemaphoreCreateRecursiveMutex())
 #endif
@@ -34,8 +36,9 @@ bool Sim7600Driver::lockTransaction(uint32_t timeoutMs)
 {
 #ifdef ESP32_TARGET
 	if (_transactionMutex == nullptr) return false;
-	const TickType_t ticks = timeoutMs == portMAX_DELAY
-		? portMAX_DELAY : pdMS_TO_TICKS(timeoutMs);
+	const uint32_t boundedTimeoutMs = timeoutMs == portMAX_DELAY
+		? hardware::SIM7600_UART_MUTEX_TIMEOUT_MS : timeoutMs;
+	const TickType_t ticks = pdMS_TO_TICKS(boundedTimeoutMs);
 	return xSemaphoreTakeRecursive(_transactionMutex, ticks) == pdTRUE;
 #else
 	(void)timeoutMs;
@@ -53,6 +56,24 @@ void Sim7600Driver::unlockTransaction()
 Sim7600Driver::CommandFailure Sim7600Driver::lastCommandFailure() const
 {
 	return _lastCommandFailure;
+}
+
+void Sim7600Driver::setWatchdog(core::Watchdog* watchdog)
+{
+	_watchdog = watchdog;
+}
+
+void Sim7600Driver::feedWatchdogIfDue(uint32_t& lastFeedMs)
+{
+#ifdef ESP32_TARGET
+	const uint32_t nowMs = utils::Timer::millis();
+	if (_watchdog != nullptr && nowMs - lastFeedMs >= 500U) {
+		_watchdog->feed(xTaskGetCurrentTaskHandle());
+		lastFeedMs = nowMs;
+	}
+#else
+	(void)lastFeedMs;
+#endif
 }
 
 constants::ErrorCode Sim7600Driver::init()
@@ -169,8 +190,10 @@ bool Sim7600Driver::sendCommandUntil(const char* command,
 
 	std::size_t length = 0U;
 	const uint32_t startMs = utils::Timer::millis();
+	uint32_t lastFeedMs = startMs;
 	while (utils::Timer::millis() - startMs < timeoutMs &&
 		    length + 1U < responseSize) {
+		feedWatchdogIfDue(lastFeedMs);
 		uint8_t byte = 0U;
 		if (_uartHal.read(&byte, 1U, 1U) == 0U) {
 			_delayHal.waitMs(1U);
@@ -223,7 +246,9 @@ bool Sim7600Driver::writeRaw(const uint8_t* data, std::size_t length,
 	char recent[8]{};
 	std::size_t recentLength = 0U;
 	const uint32_t startMs = utils::Timer::millis();
+	uint32_t lastFeedMs = startMs;
 	while (utils::Timer::millis() - startMs < timeoutMs) {
+		feedWatchdogIfDue(lastFeedMs);
 		uint8_t byte = 0U;
 		if (_uartHal.read(&byte, 1U, 1U) == 0U) {
 			_delayHal.waitMs(1U);
@@ -260,7 +285,10 @@ bool Sim7600Driver::pollMqttIncoming(MqttIncomingMessage& message)
 	if (takeIncomingMessage(message)) return true;
 	if (!_initialized || !_active || !lockTransaction(0U)) return false;
 	uint8_t byte = 0U;
-	while (_uartHal.available() > 0 && _uartHal.read(&byte, 1U, 0U) == 1U) {
+	std::size_t consumed = 0U;
+	while (consumed < 2048U && _uartHal.available() > 0 &&
+		   _uartHal.read(&byte, 1U, 0U) == 1U) {
+		++consumed;
 		consumeIncomingByte(byte);
 		if (takeIncomingMessage(message)) {
 			unlockTransaction();
@@ -373,6 +401,7 @@ void Sim7600Driver::consumeIncomingByte(uint8_t byte)
 			endClient == _incomingMessage.clientIndex &&
 			_incomingMessage.topicLength == _incomingTopicTotal &&
 			_incomingMessage.payloadLength == _incomingPayloadTotal) {
+			_incomingMessage.receivedAtMonotonicMs = nowMs;
 			_incomingMessageReady = true;
 		} else if (std::strstr(_incomingLine, "+CMQTTCONNLOST:") != nullptr ||
 			std::strstr(_incomingLine, "+CMQTTNONET") != nullptr) {
@@ -459,11 +488,14 @@ bool Sim7600Driver::waitForNetwork(uint32_t timeoutMs)
 {
 	if (!_initialized || !_active || timeoutMs == 0U) return false;
 	const uint32_t startMs = utils::Timer::millis();
+	uint32_t lastFeedMs = startMs;
 	while (utils::Timer::millis() - startMs < timeoutMs) {
+		feedWatchdogIfDue(lastFeedMs);
 		if (isNetworkRegistered() && hasRadioService()) {
 			return true;
 		}
 		_delayHal.waitMs(1000U);
+		feedWatchdogIfDue(lastFeedMs);
 	}
 	return false;
 }
@@ -632,6 +664,13 @@ bool Sim7600Driver::downloadCertificate(const char* certificateFile,
 		return false;
 	}
 	if (!_initialized || !_active) return false;
+	if (!lockTransaction(hardware::SIM7600_UART_MUTEX_TIMEOUT_MS)) {
+		return false;
+	}
+	struct TransactionUnlock final {
+		Sim7600Driver& modem;
+		~TransactionUnlock() { modem.unlockTransaction(); }
+	} transactionUnlock{*this};
 
 	// Disable modem echo so payload bytes are not echoed back over UART
 	char echoResp[32]{};
@@ -677,9 +716,11 @@ bool Sim7600Driver::downloadCertificate(const char* certificateFile,
 	std::size_t tailLen = 0U;
 	std::size_t totalBytesReceived = 0U;
 	const uint32_t startMs = utils::Timer::millis();
+	uint32_t lastFeedMs = startMs;
 	bool confirmed = false;
 
 	while (utils::Timer::millis() - startMs < 15000U) {
+		feedWatchdogIfDue(lastFeedMs);
 		uint8_t byte = 0U;
 		if (_uartHal.read(&byte, 1U, 5U) == 0U) {
 			_delayHal.waitMs(2U);
@@ -753,9 +794,11 @@ bool Sim7600Driver::sendDiagnosticCommand(const char* command, char* response,
 void Sim7600Driver::drainInput()
 {
 	uint8_t buffered = 0U;
-	while (_uartHal.available() > 0) {
+	std::size_t drained = 0U;
+	while (drained < 2048U && _uartHal.available() > 0) {
 		if (_uartHal.read(&buffered, 1U, 0U) == 0U) break;
 		consumeIncomingByte(buffered);
+		++drained;
 	}
 }
 

@@ -1,6 +1,7 @@
 #include "services/mqtt/mqtt_publish_task.h"
 
 #include "config/task_config.h"
+#include "app/connectivity_task/network_wait_policy.hpp"
 #include "utils/timer_utils.h"
 
 namespace fortico {
@@ -19,7 +20,7 @@ MqttPublishTask::MqttPublishTask(MqttPublishQueue& queue,
             _lastOutboxAttemptMs(0U), _lastTelemetryReplayMs(0U),
             _lastGeneralPublishAttemptMs(0U)
 #ifdef ESP32_TARGET
-      , _taskHandle(nullptr)
+      , _taskHandle(nullptr), _startGate(xSemaphoreCreateBinary())
 #endif
 {
 }
@@ -31,15 +32,27 @@ void MqttPublishTask::setWatchdog(core::Watchdog* watchdog) {
 bool MqttPublishTask::start()
 {
 #ifdef ESP32_TARGET
-    if (_taskHandle != nullptr) return false;
-    return xTaskCreatePinnedToCore(
+    if (_taskHandle != nullptr || _startGate == nullptr) return false;
+    (void)xSemaphoreTake(_startGate, 0U);
+    if (xTaskCreatePinnedToCore(
                &MqttPublishTask::taskEntry,
                "MqttPublishTask",
                tasks::MQTT_SERVICE_TASK_STACK_WORDS,
                this,
                tasks::MQTT_SERVICE_TASK_PRIORITY,
                &_taskHandle,
-               tasks::CORE_NETWORK) == pdTRUE;
+               tasks::CORE_NETWORK) != pdTRUE) {
+        _taskHandle = nullptr;
+        return false;
+    }
+    if (_watchdog != nullptr &&
+        !_watchdog->registerTask(_taskHandle, "MqttPublishTask")) {
+        vTaskDelete(_taskHandle);
+        _taskHandle = nullptr;
+        return false;
+    }
+    (void)xSemaphoreGive(_startGate);
+    return true;
 #else
     return false;
 #endif
@@ -49,7 +62,11 @@ void MqttPublishTask::stop()
 {
 #ifdef ESP32_TARGET
     if (_taskHandle != nullptr) {
-        vTaskDelete(_taskHandle);
+        const TaskHandle_t task = _taskHandle;
+        if (_watchdog != nullptr) {
+            (void)_watchdog->unregisterTask(task);
+        }
+        vTaskDelete(task);
         _taskHandle = nullptr;
     }
 #endif
@@ -63,6 +80,17 @@ void MqttPublishTask::taskEntry(void* context)
 
 void MqttPublishTask::run()
 {
+    if (_startGate == nullptr ||
+        xSemaphoreTake(_startGate,
+            pdMS_TO_TICKS(
+                fortico::app::network_wait::kWorkerStartupTimeoutMs)) != pdTRUE) {
+        if (_watchdog != nullptr) {
+            (void)_watchdog->unregisterTask(xTaskGetCurrentTaskHandle());
+        }
+        _taskHandle = nullptr;
+        vTaskDelete(nullptr);
+        return;
+    }
     for (;;) {
         drivers::MqttIncomingMessage incoming{};
         if (_client.pollIncoming(incoming)) {

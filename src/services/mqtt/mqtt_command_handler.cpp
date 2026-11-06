@@ -244,6 +244,7 @@ void MqttCommandHandler::audit(const MqttCommandRequest& request,
 
 void MqttCommandHandler::handle(const drivers::MqttIncomingMessage& message)
 {
+    const uint32_t receivedAtMonotonicMs = message.receivedAtMonotonicMs;
     MqttCommandRequest request{};
     char expectedTopic[96]{};
     if (message.clientIndex != 0U ||
@@ -296,7 +297,8 @@ void MqttCommandHandler::handle(const drivers::MqttIncomingMessage& message)
             std::strcmp(request.command, "ENGINE_OFF") == 0) {
             accepted = app::RemoteRelayCommandMailbox::instance().submit({
                 types::RelayCmd::CUT, types::RelaySource::REMOTE_COMMAND,
-                eventTimestamp}, request.id, request.command);
+                eventTimestamp}, request.id, request.command,
+                receivedAtMonotonicMs);
             actionError = accepted ? nullptr : "ENGINE_OFF_REJECTED";
         } else if (std::strcmp(request.command, "KILL") == 0) {
             const types::GpsData& gps = _gpsService.data();
@@ -306,7 +308,7 @@ void MqttCommandHandler::handle(const drivers::MqttIncomingMessage& message)
                 accepted = app::RemoteRelayCommandMailbox::instance().submit({
                     types::RelayCmd::EMERGENCY_CUT,
                     types::RelaySource::REMOTE_COMMAND, eventTimestamp},
-                    request.id, request.command);
+                    request.id, request.command, receivedAtMonotonicMs);
             }
             if (accepted) {
                 _commandLatch.latchAfterKill();
@@ -326,7 +328,7 @@ void MqttCommandHandler::handle(const drivers::MqttIncomingMessage& message)
                 accepted = app::RemoteRelayCommandMailbox::instance().submit({
                     types::RelayCmd::ENGAGE,
                     types::RelaySource::REMOTE_COMMAND, eventTimestamp},
-                    request.id, request.command);
+                    request.id, request.command, receivedAtMonotonicMs);
             } else if (activeAuthentication) {
                 actionError = "KILL_LATCHED";
             }

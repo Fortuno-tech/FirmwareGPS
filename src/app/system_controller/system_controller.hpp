@@ -2,6 +2,10 @@
 
 #include <cstdint>
 
+#if defined(FORTICO_ENABLE_CONTROL_TIMING) && FORTICO_ENABLE_CONTROL_TIMING
+#include "app/control_timing.hpp"
+#endif
+
 #include "app/connectivity_task/connectivity_task.hpp"
 #include "core/diagnostics/diagnostics.h"
 #include "core/error_handler/error_handler.h"
@@ -93,6 +97,9 @@ public:
 		void transitionTo(types::SystemState newState);
 		bool submitRemoteRelayCommand(types::RelayCmd command,
 									  uint64_t timestamp);
+#if defined(FORTICO_ENABLE_CONTROL_TIMING) && FORTICO_ENABLE_CONTROL_TIMING
+		void recordControlCycle(uint32_t startedAtMs, uint32_t completedAtMs);
+#endif
 
 private:
 	core::EventBus& _eventBus;
@@ -143,6 +150,13 @@ private:
 	uint64_t _lastGpsMqttPublishMs;
 	bool _killLocked;
 	bool _lastMqttConnected;
+#if defined(FORTICO_ENABLE_CONTROL_TIMING) && FORTICO_ENABLE_CONTROL_TIMING
+	ControlTimingMetrics _controlTiming;
+	bool _hasPendingRemoteActionTiming;
+	uint32_t _pendingRemoteReceiptMs;
+	types::RelayCommand _pendingRemoteAction;
+	uint32_t _lastControlTimingLogMs;
+#endif
 
 	void setBootStage(BootStage stage, const char* message);
 	bool failBoot(const char* message, constants::ErrorCode error);
@@ -157,6 +171,11 @@ private:
 							  types::RelayState expectedRelayState,
 							  const char* error);
 	void publishRemoteExecutionResult();
+#if defined(FORTICO_ENABLE_CONTROL_TIMING) && FORTICO_ENABLE_CONTROL_TIMING
+	void trackRemoteRelaySubmission(const RemoteRelayCommand& remoteCommand,
+									const types::RelayCommand& action,
+									bool submitted);
+#endif
 };
 
 }  // namespace app

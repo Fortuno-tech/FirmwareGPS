@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "core/scheduler/scheduler.h"
+#include "core/watchdog/watchdog.h"
 
 namespace fortico {
 namespace app {
@@ -15,6 +16,7 @@ public:
 	bool start();
 	void stop();
 	bool isRunning() const;
+	void setWatchdog(core::Watchdog* watchdog);
 
 private:
 	core::Scheduler _scheduler;

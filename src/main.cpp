@@ -410,7 +410,11 @@ void setup()
         Serial.println(F("[BOOT][ERROR] Watchdog initialization failed"));
         return;
     }
-    g_watchdog.registerTask(g_logger.taskHandle(), "LoggerTask");
+    if (!g_watchdog.registerTask(g_logger.taskHandle(), "LoggerTask")) {
+        Serial.println(F("[BOOT][ERROR] Logger watchdog registration failed"));
+        return;
+    }
+    g_connectivityTask.setWatchdog(&g_watchdog);
     g_logger.info(fortico::logging::TAG_SYSTEM_CONTROLLER,
                   "console de diagnostic active");
 
@@ -505,6 +509,8 @@ void setup()
 					   "initialisation application impossible");
         return;
     }
+    g_application.setWatchdog(&g_watchdog);
+    g_mqttPublishTask.setWatchdog(&g_watchdog);
     g_started = g_application.start();
 	if (!g_started) {
 		g_logger.error(fortico::logging::TAG_SYSTEM_CONTROLLER,
@@ -515,12 +521,8 @@ void setup()
 	}
 
     g_eventBus.setWatchdog(&g_watchdog);
-    g_mqttPublishTask.setWatchdog(&g_watchdog);
     if (g_eventBus.taskHandle() != nullptr) {
         g_watchdog.registerTask(g_eventBus.taskHandle(), "EventBusTask");
-    }
-    if (g_mqttPublishTask.taskHandle() != nullptr) {
-        g_watchdog.registerTask(g_mqttPublishTask.taskHandle(), "MqttPublishTask");
     }
 }
 
