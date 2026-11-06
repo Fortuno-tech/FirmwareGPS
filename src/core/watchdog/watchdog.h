@@ -31,6 +31,10 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
+#ifdef ESP32_TARGET
+#include <esp_task_wdt.h>
+#endif
+
 namespace fortico {
 namespace core {
 
@@ -44,6 +48,14 @@ public:
     /// Réinitialise le watchdog pour LA TÂCHE APPELANTE (sémantique
    
     virtual bool resetSelf() = 0;
+};
+
+class EspTaskWdtBackend final : public IWatchdogBackend {
+public:
+    bool init(uint32_t timeoutMs) override;
+    bool addTask(TaskHandle_t task) override;
+    bool removeTask(TaskHandle_t task) override;
+    bool resetSelf() override;
 };
 
 class Watchdog {

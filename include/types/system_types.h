@@ -14,12 +14,24 @@ namespace types {
 /// Cycle de vie système global, porté par AppStateMachine (Document 02 §5.1)
 enum class SystemState {
     BOOT,
-    INIT,
-    NETWORK,
-    OPERATIONAL,
-    SLEEP,     ///< [ASSUMPTION, PowerManager désactivé par défaut] non utilisé tant que FEATURE_POWER_MANAGER_ENABLED=false
-    UPDATE,
+    CHECK_PROVISIONING,
+    HALT,
+    INIT_HARDWARE,
+    INIT,               ///< Alias / legacy compat
     ERROR,
+    CONNECT_NETWORK,
+    NETWORK,            ///< Alias / legacy compat
+    OFFLINE,
+    WAIT_BADGE,
+    ALARM_STATE,
+    TRACKING_ACTIVE,
+    OPERATIONAL,        ///< Alias / legacy compat
+    SOS_STATE,
+    ENGINE_KILL,
+    LOW_BATTERY,
+    FUEL_ALERT,
+    SLEEP,
+    UPDATE,
 };
 
 /**

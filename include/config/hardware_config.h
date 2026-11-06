@@ -1,15 +1,7 @@
 /**
  * @file    hardware_config.h
- * @brief   Fréquences de bus, timeouts et paramètres de calibration/filtrage
- *          matériel (Fortico).
- *
- * @details Périmètre strict (Sprint 0, §5) : uniquement les paramètres
- *          électriques/temporels des bus et capteurs. L'affectation des GPIO
- *          reste dans pin_config.h ; les priorités/tailles de tâches FreeRTOS
- *          sont dans task_config.h.
- *
- * @note    Sources : Document 04 (Driver Development Guide), Document 02 §6
- *          (échantillonnage ADC), Document 10 (Hardware Integration Guide).
+ * @brief   Frequences de bus, timeouts et parametres de calibration/filtrage
+ *          materiel (Fortico).
  */
 #pragma once
 
@@ -19,136 +11,94 @@ namespace fortico {
 namespace hardware {
 
 // ============================================================================
-// 1. Bus I2C partagé (RTC DS3231 + RFID PN532) 
+// 1. Bus I2C partage (RTC DS3231 + RFID PN532) 
 // ============================================================================
 
-/// Fréquence du bus I2C
-constexpr uint32_t I2C_FREQUENCY_HZ = 400000;
+/// Frequence du bus I2C (100 kHz standard, optimal pour PN532 + DS3231 sur ESP32)
+constexpr uint32_t I2C_FREQUENCY_HZ = 100000;
 
-/// Timeout maximal de prise du mutex i2cBusMutex avant abandon de la
-/// transaction 
-constexpr uint32_t I2C_MUTEX_TIMEOUT_MS = 50;
+/// Timeout maximal de prise du mutex i2cBusMutex avant abandon de la transaction
+constexpr uint32_t I2C_MUTEX_TIMEOUT_MS = 100;
 
-/// Durée cible maximale d'une transaction I2C sous mutex
-constexpr uint32_t I2C_TRANSACTION_MAX_MS = 20;
+/// Duree maximale d'une transaction I2C sous mutex
+constexpr uint32_t I2C_TRANSACTION_MAX_MS = 100;
 
-/// Nombre d'échecs I2C consécutifs avant de déclarer le périphérique
+constexpr uint32_t RFID_POLL_INTERVAL_MS = 300;
+/// Attente maximale du PN532 pour une tentative RFID.
+constexpr uint32_t RFID_READ_TIMEOUT_MS = 500;
+constexpr uint32_t RTC_POLL_INTERVAL_MS = 1800000UL;
+/// Vérification/synchronisation RTC depuis le réseau cellulaire toutes les 2 h.
+constexpr uint32_t NETWORK_TIME_SYNC_INTERVAL_MS = 7200000UL;
+
+/// Nombre d'echecs I2C consecutifs avant de declarer le peripherique
 /// PERIPH_DEGRADED (RTC ou RFID)
 constexpr uint8_t I2C_MAX_CONSECUTIVE_FAILURES = 5;
 
 // ============================================================================
-// 2. Bus SPI exclusif (carte SD) — Document 04
+// 2. Bus SPI exclusif (carte SD)
 // ============================================================================
 
-/// Fréquence du bus SPI (VSPI) dédié à la carte SD
+constexpr std::uint8_t DRIVER_MAX_CONSECUTIVE_FAILURES = 5U;
 constexpr uint32_t SPI_FREQUENCY_HZ = 4000000;
 
 // ============================================================================
-// 3. Liaison UART — Modem SIM7600E-L1C (cellulaire + GNSS intégré)
-//    Le NEO-6M autonome et son UART2 dédié sont retirés — voir pin_config.h §4-5.
+// 3. Liaison UART - Modem SIM7600E-L1C
 // ============================================================================
 
-/// Débit UART1 — Modem SIM7600E-L1C (canal AT partagé : cellulaire + GNSS,
-/// voir pin_config.h §5)
 constexpr uint32_t SIM7600_UART_BAUD_RATE = 115200;
-
-/// Timeout par défaut d'une commande AT envoyée au SIM7600 avant statut TIMEOUT
 constexpr uint32_t SIM7600_AT_TIMEOUT_MS = 2000;
-
-/// Timeout étendu pour les commandes AT longues (ex. attache réseau, contexte PDP)
 constexpr uint32_t SIM7600_AT_TIMEOUT_LONG_MS = 10000;
-
-/**
- * @brief Timeout de la commande d'interrogation de position GNSS
- *        (AT+CGPSINFO / AT+CGNSSINFO), plus longue qu'une commande AT
- *        classique tant que le moteur GNSS n'a pas de premier fix (cold
- *        start possible).
- * @note  [NOUVEAU] Introduit avec l'intégration GNSS dans le SIM7600E-L1C
- *        (remplace le NEO-6M autonome) — voir pin_config.h §5.
- */
+constexpr uint8_t SIM7600_AT_MAX_ATTEMPTS = 5U;
+constexpr uint32_t SIM7600_AT_RETRY_DELAY_MS = 2000U;
+constexpr bool SIM7600_PWRKEY_IDLE_LEVEL = true;
+constexpr uint32_t SIM7600_PWRKEY_SETTLE_MS = 100U;
+constexpr uint32_t SIM7600_PWRKEY_PULSE_MS = 1500U;
+constexpr uint32_t SIM7600_BOOT_DELAY_MS = 5000U;
+constexpr uint32_t SIM_READY_SETTLE_DELAY_MS = 3000U;
+constexpr uint32_t OFFLINE_RETRY_INTERVAL_MS = 30000U;
+constexpr uint32_t ALARM_TIMEOUT_MS = 60000U;
 constexpr uint32_t SIM7600_GNSS_QUERY_TIMEOUT_MS = 3000;
-
-/**
- * @brief Timeout de prise du mutex du canal UART/AT du SIM7600, partagé
- *        entre les commandes cellulaires (NetworkService/MQTTService) et
- *        les commandes GNSS (TrackingManager). Même logique d'arbitrage que
- *        i2cBusMutex (Document 04 §4), appliquée ici à sim7600UartMutex.
- * @warning [NOUVEAU] Avant l'intégration GNSS, sim7600UartMutex n'était
- *          utilisé qu'en interne par sim7600Manager (Document 07 §5). Il
- *          devient désormais une ressource explicitement partagée entre
- *          deux consommateurs métier distincts — à répercuter dans le
- *          Document 07 (table des mutex) et le Document 04 (driver SIM7600).
- */
 constexpr uint32_t SIM7600_UART_MUTEX_TIMEOUT_MS = 50;
-
-/// Période d'interrogation GNSS en régime nominal (TRACKING_ONLINE/OFFLINE)
-constexpr uint32_t GNSS_POLL_INTERVAL_MS = 1000;
-
-/// Nombre minimal de satellites GPS pour valider un fix (Document 06 §4)
-/// [ASSUMPTION — seuil non fourni dans les documents sources]
+constexpr uint32_t GNSS_POLL_INTERVAL_MS = 10000;
+constexpr uint32_t GPS_LAST_FIX_MAX_AGE_MS = 25000;
 constexpr uint8_t GPS_MIN_SATELLITES_FOR_FIX = 4;
 
 // ============================================================================
-// 4. Échantillonnage et filtrage ADC — Document 02 §6, Document 10 §7
+// 4. Echantillonnage et filtrage ADC
 // ============================================================================
 
-/// Atténuation ADC (11 dB ~ plage utile 0–3,3 V après pont diviseur)
 constexpr uint8_t ADC_ATTENUATION_DB = 11;
-
-/// Nombre d'échantillons moyennés par cycle de lecture (sur-échantillonnage)
+constexpr float FUEL_MIN_VALID_VOLTAGE = 0.05F;
+constexpr float FUEL_MAX_VALID_VOLTAGE = 3.35F;
 constexpr uint8_t ADC_OVERSAMPLE_COUNT = 16;
-
-/// Coefficient du filtre passe-bas exponentiel (EMA) appliqué après la moyenne
 constexpr float ADC_EMA_ALPHA = 0.2f;
-
-/// Période d'échantillonnage de SensorSamplingTask (batterie/température/carburant)
 constexpr uint32_t SENSOR_SAMPLING_PERIOD_MS = 500;
 
-/**
- * @brief Ratio du pont diviseur de tension batterie (12V nominal).
- * @warning Valeur d'exemple — DOIT être calibrée physiquement sur le montage
- *          réel avant toute mise en production (Pinout V4, note n°3).
- */
-constexpr float BATTERY_VOLTAGE_DIVIDER_RATIO = 4.0f;
+#include "utils/adc_calibration.h"
 
-/// Seuil de tension batterie considéré critique (déclenche DEGRADED_MODE,
-/// jamais une coupure moteur — Document 02 §4) [ASSUMPTION seuil]
+constexpr float BATTERY_VOLTAGE_DIVIDER_RATIO = fortico::calibration::BATTERY_DIVIDER_RATIO;
 constexpr float BATTERY_CRITICAL_VOLTAGE = 10.5f;
-
-/**
- * @brief Ratio de conversion de la jauge carburant (FUEL_ADC, GPIO36).
- * @warning [ASSUMPTION] Broche et conditionnement provisoires — voir
- *          pin_config.h §9.3. Ratio à déterminer une fois le type de jauge
- *          (résistive/capacitive) confirmé par l'équipe hardware.
- */
-constexpr float FUEL_SENDER_RATIO_PLACEHOLDER = 1.0f;
+constexpr float FUEL_SENDER_RATIO_PLACEHOLDER = fortico::calibration::FUEL_SENDER_DIVIDER_RATIO;
 
 // ============================================================================
-// 5. Entrées utilisateur — Document 06 (AlertManager)
+// 5. Entrees utilisateur
 // ============================================================================
 
-/// Anti-rebond logiciel du bouton SOS
 constexpr uint32_t BUTTON_DEBOUNCE_MS = 30;
-
-/// Durée d'appui minimale pour qualifier un « appui long » (SOS)
 constexpr uint32_t BUTTON_LONG_PRESS_MS = 2000;
 
 // ============================================================================
-// 6. Watchdog matériel — SOP §3.1 (R-02), Document 07 §6
+// 6. Watchdog materiel
 // ============================================================================
 
-/// Timeout du watchdog matériel avant reset automatique
 constexpr uint32_t WDT_TIMEOUT_S = 8;
 
 // ============================================================================
-// 7. Stockage local (carte SD) — Document 09 §7
+// 7. Stockage local (carte SD)
 // ============================================================================
 
-/// Intervalle de flush périodique du buffer d'écriture SD
 constexpr uint32_t SD_FLUSH_INTERVAL_MS = 5000;
-
-/// Taille du buffer RAM d'enregistrements avant flush forcé [ASSUMPTION]
 constexpr uint16_t SD_WRITE_BUFFER_MAX_RECORDS = 64;
 
-}  // namespace hw
+}  // namespace hardware
 }  // namespace fortico

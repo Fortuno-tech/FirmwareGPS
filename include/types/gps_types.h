@@ -18,11 +18,16 @@ namespace types {
 struct GpsData {
     double latitude;
     double longitude;
+    float altitudeMeters;
     float speedKmh;     ///< si !fixValid, DOIT valoir constants::INVALID_SPEED (constants/default_values.h) — jamais 0.0f, voir note de sûreté dans ce fichier
     float headingDeg;
+    float pdop;
+    float hdop;
     uint8_t satellites;
-    bool fixValid;      ///< Document 06 §4 : nécessite satellites >= GPS_MIN_SATELLITES_FOR_FIX
-    uint64_t timestamp; ///< horodatage RTC (RtcDriver) ou fallback monotone (RtcHal) si RTC indisponible
+    uint8_t fixMode;
+    bool fixValid;      ///< Fix actuellement exploitable : mode valide, satellites suffisants et âge inférieur au seuil.
+    bool hasLastFix;    ///< Au moins un fix valide a été reçu depuis le démarrage du service.
+    uint64_t timestamp; ///< Horloge monotone millis() du dernier fix valide ; utilisée pour calculer son âge.
 };
 
 }  // namespace types

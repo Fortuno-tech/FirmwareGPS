@@ -15,6 +15,8 @@
  */
 #pragma once
 
+#include "config/ota_config.h"
+
 namespace fortico {
 namespace project {
 
@@ -58,8 +60,8 @@ constexpr bool FEATURE_DIAGNOSTICS_ENABLED = true;
 /// pas spécifiés fonctionnellement
 constexpr bool FEATURE_POWER_MANAGER_ENABLED = false;
 
-/// Active OTA — permet un kill-switch d'urgence indépendant de R-13
-constexpr bool FEATURE_OTA_ENABLED = true;
+/// OTA désactivée en production tant que son chemin complet n'est pas livré.
+constexpr bool FEATURE_OTA_ENABLED = ota::ENABLED_IN_PRODUCTION;
 
 // ============================================================================
 // 3. Build

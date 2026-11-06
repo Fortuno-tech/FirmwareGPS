@@ -66,6 +66,12 @@ enum class EventID : uint32_t {
     SYSTEM_SELFTEST_PASSED,
     SYSTEM_FAULT,
 
+    // Commandes distantes et événements flux Fortico
+    REMOTE_STOP_COMMAND,
+    REMOTE_KILL_COMMAND,
+    SOS_ACK_RECEIVED,
+    BADGE_REMOVED,
+
     //  Sentinelle — DOIT rester en dernier (voir avertissement ci-dessus)
     EVENT_ID_COUNT,
 };

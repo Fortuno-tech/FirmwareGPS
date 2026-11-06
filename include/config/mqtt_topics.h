@@ -18,26 +18,33 @@ namespace fortico {
 namespace topics {
 
 /// Publication — position, vitesse, capteurs, état relais (QoS 1)
-constexpr const char* TELEMETRY = "fortico/%s/telemetry";
+constexpr const char* TELEMETRY = "fleet/%s/telemetry";
 
 /// Publication — événement d'authentification (badge lu, autorisé/refusé) (QoS 1)
-constexpr const char* AUTH = "fortico/%s/auth";
+constexpr const char* AUTH = "fleet/%s/rfid";
 
 /// Publication — alertes (SOS, anomalie) (QoS 1, ou 2 pour SOS — mqtt_config.h)
-constexpr const char* ALERT = "fortico/%s/alert";
+constexpr const char* ALERT = "fleet/%s/alarm";
 
 /// Publication — état de connexion, heartbeat, version firmware (QoS 1, retain)
-constexpr const char* STATUS = "fortico/%s/status";
+constexpr const char* STATUS = "fleet/%s/status";
 
 /// Souscription — commandes distantes (force-cut, unlock, ota-trigger) (QoS 1)
-constexpr const char* CMD = "fortico/%s/cmd";
+constexpr const char* CMD = "fleet/%s/cmd";
 
 /// Souscription — métadonnées et manifeste de mise à jour OTA (QoS 1)
-constexpr const char* OTA = "fortico/%s/ota";
+constexpr const char* OTA = "fleet/%s/ota";
 
 /// Last Will and Testament — signalé hors-ligne en cas de déconnexion anormale
 /// (QoS 1, retain)
-constexpr const char* LWT = "fortico/%s/lwt";
+constexpr const char* LWT = "fleet/%s/lwt";
+
+constexpr const char* GPS = "fleet/%s/gps";
+constexpr const char* FUEL = "fleet/%s/fuel";
+constexpr const char* BATTERY = "fleet/%s/battery";
+constexpr const char* ENGINE = "fleet/%s/engine";
+constexpr const char* BLACKBOX = "fleet/%s/blackbox";
+constexpr const char* CMD_ACK = "fleet/%s/cmd/ack";
 
 }  // namespace topics
 }  // namespace fortico

@@ -19,6 +19,11 @@
 
 #include <cstdint>
 
+#ifdef ESP32_TARGET
+#include <esp_flash_encrypt.h>
+#include <esp_secure_boot.h>
+#endif
+
 namespace fortico {
 namespace security {
 
@@ -42,11 +47,26 @@ constexpr const char* NVS_KEY_WIFI_CREDS = "wifi_creds";
 /// Identifiants MQTT chiffrés
 constexpr const char* NVS_KEY_MQTT_CREDS = "mqtt_creds";
 
+/// Identifiant stable du boîtier utilisé comme clientId MQTT
+constexpr const char* NVS_KEY_DEVICE_ID = "device_id";
+
+/// Identifiant métier stable du véhicule utilisé dans les topics MQTT
+constexpr const char* NVS_KEY_VEHICLE_ID = "vehicle_id";
+
 /// Identifiants APN chiffrés
 constexpr const char* NVS_KEY_APN_CREDS = "apn_creds";
 
 /// Liste blanche des UID RFID autorisés
 constexpr const char* NVS_KEY_RFID_WHITELIST = "rfid_whitelist";
+
+/// Clé racine provisionnée par l'outil de fabrication, jamais codée en dur.
+constexpr const char* NVS_KEY_SECURITY_ROOT = "security_root";
+
+/// Anti-rejeu des commandes MQTT (séquence persistante et dernier identifiant).
+constexpr const char* NVS_KEY_MQTT_COMMAND_STATE = "mqtt_cmd_state";
+
+/// Clé publique Ed25519 pour la vérification des mises à jour OTA
+constexpr const char* NVS_KEY_OTA_PUBKEY = "ota_pubkey";
 
 /// Compteur de séquence télémétrie 
 constexpr const char* NVS_KEY_DEVICE_SEQ = "device_seq";
@@ -107,11 +127,32 @@ constexpr bool FLASH_ENCRYPTION_REQUIRED_IN_PRODUCTION = true;
 /// Indicateur de compilation : Secure Boot attendu actif en production
 constexpr bool SECURE_BOOT_REQUIRED_IN_PRODUCTION = true;
 
+inline bool flashEncryptionEnabled() noexcept {
+#ifdef ESP32_TARGET
+    return esp_flash_encryption_enabled();
+#else
+    return false;
+#endif
+}
+
+inline bool secureBootEnabled() noexcept {
+#ifdef ESP32_TARGET
+    return esp_secure_boot_enabled();
+#else
+    return false;
+#endif
+}
+
+inline bool bootSecurityStateOk(bool flashEncryptionEnabledState,
+                               bool secureBootEnabledState) noexcept {
+    return flashEncryptionEnabledState && secureBootEnabledState;
+}
+
 // ============================================================================
-// 5. Anti-rejeu des commandes distantes — Document 08 §2 [ASSUMPTION]
+// 5. Anti-rejeu des commandes distantes
 // ============================================================================
 
-/// Fenêtre de validité maximale d'une commande MQTT entrante avant rejet
+/// Fenêtre temporelle appliquée uniquement après synchronisation réseau RTC.
 constexpr uint32_t COMMAND_VALIDITY_WINDOW_S = 60;
 
 }  // namespace security

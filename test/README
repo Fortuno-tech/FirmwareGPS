@@ -1,6 +1,17 @@
 
 This directory is intended for PlatformIO Test Runner and project tests.
 
+Run the isolated, host-native Unity tests with:
+
+```text
+pio test -e native
+```
+
+The native environment compiles only the timer utility and the test targets;
+it does not compile the Arduino application or require `setup()`/`loop()`.
+The OTA policy test is built with `FORTICO_PRODUCTION_BUILD` and verifies that
+OTA remains disabled until its complete update pipeline is implemented.
+
 Unit Testing is a software testing method by which individual units of
 source code, sets of one or more MCU program modules together with associated
 control data, usage procedures, and operating procedures, are tested to

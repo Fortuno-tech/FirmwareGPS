@@ -1,3 +1,4 @@
+
 /**
  * @file    logger.h
  * @brief   Logger texte (debug/diagnostic) — Fortico.
@@ -35,6 +36,7 @@
 
 namespace fortico {
 namespace core {
+class Watchdog;
 
 /// Destination réelle des lignes de log formatées — implémentée séparément
 /// selon l'environnement (Serial en production, buffer en test natif).
@@ -56,6 +58,9 @@ public:
 
     /// Crée LoggerTask (Document 07 §2 : Core 0, priorité 1).
     bool start();
+
+    void setWatchdog(Watchdog* watchdog);
+    TaskHandle_t taskHandle() const { return _taskHandle; }
 
     /// Change le niveau minimal à chaud (ex. ConfigService, document 07 §4bis.3)
     void setMinLevel(logging::Level level);
@@ -96,6 +101,7 @@ private:
     QueueHandle_t _queue;
     TaskHandle_t _taskHandle;
     ILogSink* _sink;
+    Watchdog* _watchdog;
     logging::Level _minLevel;
     uint32_t _droppedCount;
     bool _initialized;

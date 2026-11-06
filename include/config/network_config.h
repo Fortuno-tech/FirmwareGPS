@@ -92,16 +92,14 @@ constexpr uint32_t WIFI_PROVISIONING_PORTAL_TIMEOUT_MS = 300000;
  * @warning [ASSUMPTION] Valeur d'exemple — à confirmer avec l'équipe backend
  *          avant implémentation figée (Document 08, note en tête).
  */
-constexpr const char* MQTT_BROKER_HOST = "mqtt.fortico.example";
+constexpr const char* MQTT_BROKER_HOST =
+    "4ea471d3375a4794bb74bc0383c912d0.s1.eu.hivemq.cloud";
 
 /// Port du broker MQTT — TLS obligatoire (R-05, SOP §4.1)
 constexpr uint16_t MQTT_BROKER_PORT = 8883;
 
 /// Intervalle keepalive MQTT (PINGREQ/PINGRESP)
 constexpr uint16_t MQTT_KEEPALIVE_INTERVAL_S = 60;
-
-/// Préfixe de l'identifiant client MQTT, complété par device_id à l'exécution
-constexpr const char* MQTT_CLIENT_ID_PREFIX = "FORTICO-";
 
 /// Taille maximale d'un payload JSON MQTT (garde-fou anti-dépassement)
 constexpr uint32_t MQTT_MAX_PAYLOAD_SIZE_BYTES = 2048;

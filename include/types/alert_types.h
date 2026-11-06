@@ -24,9 +24,9 @@ enum class AlertCode {
 };
 
 enum class AlertSeverity : uint8_t {
-    LOW,
+    LOW_SEVERITY,
     MEDIUM,
-    HIGH,
+        HIGH_SEVERITY,
 };
 
 struct AlertEvent {

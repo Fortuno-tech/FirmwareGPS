@@ -43,6 +43,7 @@
 
 namespace fortico {
 namespace core {
+class Watchdog;
 
 class EventBus : public interfaces::IPublisher, public interfaces::ISubscriber {
 public:
@@ -58,6 +59,9 @@ public:
     /// après que tous les abonnements d'initialisation ont été faits si
     /// possible (Document 07 §5, réduit la contention sur eventBusSubMutex).
     bool start();
+
+    void setWatchdog(Watchdog* watchdog);
+    TaskHandle_t taskHandle() const { return _taskHandle; }
 
     // ------------------------------------------------------------------
     // IPublisher
@@ -107,6 +111,7 @@ private:
     QueueHandle_t _inputQueue;
     SemaphoreHandle_t _subMutex;
     TaskHandle_t _taskHandle;
+    Watchdog* _watchdog;
     TopicSubscription _subscriptions[static_cast<uint32_t>(
         constants::EventID::EVENT_ID_COUNT)];
     bool _initialized;

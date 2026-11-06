@@ -7,6 +7,9 @@
 #include <cstdio>
 #include <cstring>
 
+#include "core/watchdog/watchdog.h"
+#include "utils/timer_utils.h"
+
 namespace fortico {
 namespace core {
 
@@ -14,6 +17,7 @@ Logger::Logger()
     : _queue(nullptr),
       _taskHandle(nullptr),
       _sink(nullptr),
+      _watchdog(nullptr),
       _minLevel(logging::Level::LOG_INFO),
       _droppedCount(0),
       _initialized(false) {
@@ -61,6 +65,10 @@ bool Logger::start() {
         tasks::CORE_NETWORK);  // Core 0, Document 07 §1
 
     return result == pdTRUE;
+}
+
+void Logger::setWatchdog(Watchdog* watchdog) {
+    _watchdog = watchdog;
 }
 
 void Logger::setMinLevel(logging::Level level) {
@@ -117,7 +125,7 @@ void Logger::logVariadic(logging::Level level, const char* tag, const char* fmt,
 
     LogEntry entry{};
     entry.level = level;
-    entry.timestampMs = 0;  // TODO(Sprint 1, utils::Timer) : renseigner via Timer::millis() une fois lié
+    entry.timestampMs = utils::Timer::millis();
 
     std::strncpy(entry.tag, tag != nullptr ? tag : "?", sizeof(entry.tag) - 1);
     entry.tag[sizeof(entry.tag) - 1] = '\0';
@@ -152,11 +160,12 @@ void Logger::taskEntry(void* param) {
 void Logger::run() {
     for (;;) {
         LogEntry entry{};
-        if (xQueueReceive(_queue, &entry, portMAX_DELAY) == pdTRUE) {
+        if (xQueueReceive(_queue, &entry, pdMS_TO_TICKS(100U)) == pdTRUE) {
             writeEntry(entry);
         }
-        // TODO(Sprint 1, Watchdog) : feed watchdog ici si LoggerTask est un
-        // jour enregistrée (Document 07 §6 ne l'y liste pas actuellement).
+        if (_watchdog != nullptr) {
+            _watchdog->feed(_taskHandle);
+        }
     }
 }
 

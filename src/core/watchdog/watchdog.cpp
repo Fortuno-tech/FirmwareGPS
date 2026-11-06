@@ -11,6 +11,45 @@
 namespace fortico {
 namespace core {
 
+bool EspTaskWdtBackend::init(uint32_t timeoutMs)
+{
+#ifdef ESP32_TARGET
+    return esp_task_wdt_init(timeoutMs / 1000U, true) == ESP_OK;
+#else
+    (void)timeoutMs;
+    return false;
+#endif
+}
+
+bool EspTaskWdtBackend::addTask(TaskHandle_t task)
+{
+#ifdef ESP32_TARGET
+    return task != nullptr && esp_task_wdt_add(task) == ESP_OK;
+#else
+    (void)task;
+    return false;
+#endif
+}
+
+bool EspTaskWdtBackend::removeTask(TaskHandle_t task)
+{
+#ifdef ESP32_TARGET
+    return task != nullptr && esp_task_wdt_delete(task) == ESP_OK;
+#else
+    (void)task;
+    return false;
+#endif
+}
+
+bool EspTaskWdtBackend::resetSelf()
+{
+#ifdef ESP32_TARGET
+    return esp_task_wdt_reset() == ESP_OK;
+#else
+    return false;
+#endif
+}
+
 Watchdog::Watchdog()
     : _backend(nullptr),
       _timeoutMs(0),
@@ -48,26 +87,29 @@ bool Watchdog::registerTask(TaskHandle_t task, const char* name) {
         return false;  // deja enregistree
     }
 
+    TrackedTask* freeSlot = nullptr;
+    for (auto& tracked : _tracked) {
+        if (!tracked.used) {
+            freeSlot = &tracked;
+            break;
+        }
+    }
+    if (freeSlot == nullptr) {
+        return false;
+    }
+
     if (!_backend->addTask(task)) {
         return false;
     }
 
-    for (auto& t : _tracked) {
-        if (!t.used) {
-            t.used = true;
-            t.handle = task;
-            std::strncpy(t.name, name != nullptr ? name : "?", sizeof(t.name) - 1);
-            t.name[sizeof(t.name) - 1] = '\0';
-            t.lastFeedMs = 0;
-            _registeredCount++;
-            return true;
-        }
-    }
-
-    // Table de bookkeeping pleine (MAX_TRACKED_TASKS atteint) : le backend
-    // matériel a quand même enregistré la tâche (protection réelle assurée),
-    // seul le suivi diagnostic est indisponible pour celle-ci.
-    return false;
+    freeSlot->used = true;
+    freeSlot->handle = task;
+    std::strncpy(freeSlot->name, name != nullptr ? name : "?",
+                 sizeof(freeSlot->name) - 1);
+    freeSlot->name[sizeof(freeSlot->name) - 1] = '\0';
+    freeSlot->lastFeedMs = utils::Timer::millis();
+    _registeredCount++;
+    return true;
 }
 
 bool Watchdog::unregisterTask(TaskHandle_t task) {
