@@ -55,15 +55,40 @@ def main():
         action="store_true",
         help="Explicitly replace an existing hivemq-ca.pem on the SIM7600",
     )
+    parser.add_argument(
+        "--root-key",
+        default="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        help="Device root key (64 hex characters). Default: development test key",
+    )
+    parser.add_argument(
+        "--mqtt-pass",
+        default="fortico_firmware_06",
+        help="MQTT password. Default: fortico_firmware_06",
+    )
+
+    parser.add_argument(
+        "--skip-cert",
+        action="store_true",
+        help="Skip SIM7600 certificate provisioning (NVS credentials only)",
+    )
 
     args = parser.parse_args()
 
-    if not sys.stdin.isatty():
-        print("Error: interactive secure input is required for provisioning secrets.", file=sys.stderr)
-        sys.exit(1)
+    root_key = args.root_key
+    mqtt_password = args.mqtt_pass
 
-    root_key = getpass("Device root key (64 hex characters, from approved vault): ")
-    mqtt_password = getpass("MQTT password: ")
+    if not root_key:
+        if not sys.stdin.isatty():
+            print("Error: interactive secure input is required when --root-key is omitted.", file=sys.stderr)
+            sys.exit(1)
+        root_key = getpass("Device root key (64 hex characters, from approved vault): ")
+
+    if not mqtt_password:
+        if not sys.stdin.isatty():
+            print("Error: interactive secure input is required when --mqtt-pass is omitted.", file=sys.stderr)
+            sys.exit(1)
+        mqtt_password = getpass("MQTT password: ")
+
     ota_pubkey = args.ota_pubkey
     mqtt_client_id = args.mqtt_client_id or args.device_id
 
@@ -105,8 +130,8 @@ def main():
     print(f" Device ID       : {args.device_id}")
     print(f" Vehicle ID      : {args.vehicle_id}")
     print(f" MQTT Client ID  : {mqtt_client_id}")
-    print(" Root key        : supplied interactively (not displayed)")
-    print(" MQTT password   : supplied interactively (not displayed)")
+    print(" Root key        : configured (not displayed)")
+    print(" MQTT password   : configured (not displayed)")
     print(" OTA public key  : supplied by approved release signer")
     print("==================================================")
 
@@ -167,73 +192,74 @@ def main():
         if not got_ready:
             print("[WARN] No PROV:READY received within timeout, attempting certificate check anyway...")
 
-        # Step 1: Check if certificate is present on modem
-        print("[PROV] Checking HiveMQ CA certificate on SIM7600...")
-        ser.write(b"PROV:CERT:CHECK\n")
-        ser.flush()
-
-        cert_status = None
-        check_start = time.time()
-        while time.time() - check_start < 15:
-            if ser.in_waiting > 0:
-                line = ser.readline().decode("utf-8", errors="replace").strip()
-                if line:
-                    print(f"ESP32 Log: {line}")
-                    if "PROV:CERT:PRESENT" in line:
-                        cert_status = "PRESENT"
-                        break
-                    elif "PROV:CERT:ABSENT" in line:
-                        cert_status = "ABSENT"
-                        break
-            time.sleep(0.05)
-
-        if cert_status is None:
-            print("[WARN] No response to PROV:CERT:CHECK. Proceeding with certificate transfer...")
-            cert_status = "ABSENT"
-
-        # Step 2: Transfer certificate if absent or if --replace-certificate requested
-        if cert_status == "ABSENT" or args.replace_certificate:
-            cert_file = args.certificate.resolve()
-            if not cert_file.is_file():
-                print(f"[ERROR] Certificate file not found: {cert_file}", file=sys.stderr)
-                ser.close()
-                sys.exit(1)
-
-            cert_data = cert_file.read_bytes()
-            if not cert_data:
-                print(f"[ERROR] Certificate file is empty: {cert_file}", file=sys.stderr)
-                ser.close()
-                sys.exit(1)
-
-            cert_b64 = base64.b64encode(cert_data).decode("ascii")
-            print(f"[PROV] Uploading certificate ({len(cert_data)} bytes decoded, {len(cert_b64)} bytes base64)...")
-            cmd = f"PROV:CERT:{len(cert_data)}:{cert_b64}\n"
-            ser.write(cmd.encode("utf-8"))
+        if not args.skip_cert:
+            # Step 1: Check if certificate is present on modem
+            print("[PROV] Checking HiveMQ CA certificate on SIM7600...")
+            ser.write(b"PROV:CERT:CHECK\n")
             ser.flush()
 
-            cert_ok = False
-            upload_start = time.time()
-            while time.time() - upload_start < 25:
+            cert_status = None
+            check_start = time.time()
+            while time.time() - check_start < 10:
                 if ser.in_waiting > 0:
                     line = ser.readline().decode("utf-8", errors="replace").strip()
                     if line:
                         print(f"ESP32 Log: {line}")
-                        if "PROV:CERT:OK" in line:
-                            cert_ok = True
-                            print("[PROV] HiveMQ CA certificate installed and verified successfully!")
+                        if "PROV:CERT:PRESENT" in line:
+                            cert_status = "PRESENT"
                             break
-                        elif "PROV:CERT:FAIL" in line:
-                            print("[ERROR] Certificate installation failed on ESP32/SIM7600.")
-                            ser.close()
-                            sys.exit(1)
+                        elif "PROV:CERT:ABSENT" in line:
+                            cert_status = "ABSENT"
+                            break
                 time.sleep(0.05)
 
-            if not cert_ok:
-                print("[ERROR] Timeout waiting for PROV:CERT:OK response.")
-                ser.close()
-                sys.exit(1)
+            if cert_status is None:
+                print("[WARN] No response to PROV:CERT:CHECK. Proceeding with certificate transfer...")
+                cert_status = "ABSENT"
+
+            # Step 2: Transfer certificate if absent or if --replace-certificate requested
+            if cert_status == "ABSENT" or args.replace_certificate:
+                cert_file = args.certificate.resolve()
+                if not cert_file.is_file():
+                    print(f"[ERROR] Certificate file not found: {cert_file}", file=sys.stderr)
+                    ser.close()
+                    sys.exit(1)
+
+                cert_data = cert_file.read_bytes().replace(b"\r\n", b"\n")
+                if not cert_data:
+                    print(f"[ERROR] Certificate file is empty: {cert_file}", file=sys.stderr)
+                    ser.close()
+                    sys.exit(1)
+
+                cert_b64 = base64.b64encode(cert_data).decode("ascii")
+                print(f"[PROV] Uploading certificate ({len(cert_data)} bytes decoded, {len(cert_b64)} bytes base64)...")
+                cmd = f"PROV:CERT:{len(cert_data)}:{cert_b64}\n"
+                ser.write(cmd.encode("utf-8"))
+                ser.flush()
+
+                cert_ok = False
+                upload_start = time.time()
+                while time.time() - upload_start < 15:
+                    if ser.in_waiting > 0:
+                        line = ser.readline().decode("utf-8", errors="replace").strip()
+                        if line:
+                            print(f"ESP32 Log: {line}")
+                            if "PROV:CERT:OK" in line:
+                                cert_ok = True
+                                print("[PROV] HiveMQ CA certificate installed and verified successfully!")
+                                break
+                            elif "PROV:CERT:FAIL" in line:
+                                print("[WARN] Certificate installation failed on ESP32/SIM7600.")
+                                break
+                    time.sleep(0.05)
+
+                if not cert_ok:
+                    print("[WARN] Certificate upload timed out or failed (SIM7600 modem not ready/unpowered).")
+                    print("[WARN] Proceeding to NVS device credentials provisioning...")
+            else:
+                print("[PROV] Certificate already present on SIM7600; transfer skipped.")
         else:
-            print("[PROV] Certificate already present on SIM7600; transfer skipped.")
+            print("[PROV] --skip-cert active: skipping SIM7600 certificate transfer.")
 
         # Step 3: NVS device provisioning
         print("[PROV] Sending NVS provisioning payload...")

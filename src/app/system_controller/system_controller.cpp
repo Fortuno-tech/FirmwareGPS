@@ -395,7 +395,9 @@ void SystemController::update()
 	logBatteryStatus();
 
 	_relayManager.update();
+#if defined(FORTICO_ENABLE_CONTROL_TIMING) && FORTICO_ENABLE_CONTROL_TIMING
 	const uint32_t relayProcessCountBefore = _relayManager.processedCommandCount();
+#endif
 	_relayManager.process();
 #if defined(FORTICO_ENABLE_CONTROL_TIMING) && FORTICO_ENABLE_CONTROL_TIMING
 	if (_relayManager.processedCommandCount() != relayProcessCountBefore) {
